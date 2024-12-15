@@ -3,7 +3,8 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
-// Gift Model and DatabaseHelper (same as before)
+import 'package:firebase_auth/firebase_auth.dart';
+// Gift Model and DatabaseHelper
 class Gift {
   int? id;
   String name;
@@ -84,6 +85,171 @@ class DatabaseHelper {
     return await db.delete('gifts', where: 'id = ?', whereArgs: [id]);
   }
 }
+// LoginPage
+class LoginPage extends StatefulWidget {
+  @override
+  _LoginPageState createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final _formKey = GlobalKey<FormState>();
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Login')),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              TextFormField(
+                controller: emailController,
+                decoration: const InputDecoration(labelText: 'Email'),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter your email';
+                  }
+                  return null;
+                },
+              ),
+              TextFormField(
+                controller: passwordController,
+                decoration: const InputDecoration(labelText: 'Password'),
+                obscureText: true,
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter your password';
+                  }
+                  return null;
+                },
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  if (_formKey.currentState!.validate()) {
+                    try {
+                      await FirebaseAuth.instance.signInWithEmailAndPassword(
+                        email: emailController.text,
+                        password: passwordController.text,
+                      );
+                      // Navigate to Gift List screen after successful login
+                    } on FirebaseAuthException catch (e) {
+                      // Handle login errors (e.g., wrong credentials)
+                    }
+                  }
+                },
+                child: const Text('Login'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// RegistrationPage
+class RegistrationPage extends StatefulWidget {
+  const RegistrationPage({super.key});
+  @override
+  _RegistrationPageState createState() => _RegistrationPageState();
+}
+
+class _RegistrationPageState extends State<RegistrationPage> {
+  final _formKey = GlobalKey<FormState>();
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
+  final confirmPasswordController = TextEditingController();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Register')),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              TextFormField(
+                controller: emailController,
+                decoration: const InputDecoration(labelText: 'Email'),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter your email';
+                  }
+                  return null;
+                },
+              ),
+              TextFormField(
+                controller: passwordController,
+                decoration: const InputDecoration(labelText: 'Password'),
+                obscureText: true,
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter your password';
+                  }
+                  return null;
+                },
+              ),
+              TextFormField(
+                controller: confirmPasswordController,
+                decoration: const InputDecoration(labelText: 'Confirm Password'),
+                obscureText: true,
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please confirm your password';
+                  }
+                  if (value != passwordController.text) {
+                    return 'Passwords do not match';
+                  }
+                  return null;
+                },
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  if (_formKey.currentState!.validate()) {
+                    try {
+                      UserCredential userCredential = await FirebaseAuth.instance
+                          .createUserWithEmailAndPassword(
+                        email: emailController.text,
+                        password: passwordController.text,
+                      );
+                      // Navigate to the next screen or show a success message
+                      if (userCredential.user != null) {
+                        Navigator.pop(context); // Return to previous screen
+                      }
+                    } on FirebaseAuthException catch (e) {
+                      String errorMessage = "Registration failed.";
+                      if (e.code == 'weak-password') {
+                        errorMessage = 'The password provided is too weak.';
+                      } else if (e.code == 'email-already-in-use') {
+                        errorMessage = 'The account already exists for that email.';
+                      } else if (e.code == 'invalid-email') {
+                        errorMessage = 'The email address is not valid.';
+                      }
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(errorMessage)),
+                      );
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('An unexpected error occurred.')),
+                      );
+                    }
+                  }
+                },
+                child: const Text('Register'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 // UI Code (GiftListPage and GiftDetailsPage)
 class GiftListPage extends StatefulWidget {
@@ -111,7 +277,17 @@ class _GiftListPageState extends State<GiftListPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Gift List')),
+      appBar: AppBar(
+        title: const Text('Gift List'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await FirebaseAuth.instance.signOut();
+            },
+          ),
+        ],
+      ),
       body: ListView.builder(
         itemCount: gifts.length,
         itemBuilder: (context, index) {
@@ -122,35 +298,20 @@ class _GiftListPageState extends State<GiftListPage> {
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (context) => GiftDetailsPage(gift: gift)),
-              ).then((_) => _loadGifts()); // Refresh list after returning
+              ).then((_) => _loadGifts());
             },
           );
         },
       ),
-      floatingActionButton: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          FloatingActionButton(
-            onPressed: () async {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const GiftDetailsPage()),
-              );
-              _loadGifts(); // Refresh list after adding
-            },
-            child: const Icon(Icons.add),
-          ),
-          const SizedBox(width: 10),
-          FloatingActionButton(
-            onPressed: () async {
-              if (gifts.isNotEmpty) {
-                await dbHelper.deleteGift(gifts.last.id!);
-                _loadGifts();
-              }
-            },
-            child: const Icon(Icons.delete),
-          ),
-        ],
+      floatingActionButton: FloatingActionButton(
+        onPressed: () async {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const GiftDetailsPage()),
+          );
+          _loadGifts();
+        },
+        child: const Icon(Icons.add),
       ),
     );
   }
@@ -294,23 +455,19 @@ class HedieatyApp extends StatelessWidget {
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
-  final List<String> friends = const ['Alice', 'Bob', 'Charlie'];
-
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Hedieaty Home')),
-      body: Center(
-        child: ElevatedButton(
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const GiftListPage()),
-            );
-          },
-          child: const Text('View Gift List'),
-        ),
-      ),
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasData) {
+          return const GiftListPage();
+        }
+        return LoginPage();
+      },
     );
   }
 }
