@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
-
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
 // Gift Model and DatabaseHelper (same as before)
 class Gift {
   int? id;
@@ -264,7 +265,16 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
   }
 }
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    print('Firebase initialized successfully');
+  } catch (e) {
+    print('Error initializing Firebase: $e');
+  }
   runApp(const HedieatyApp());
 }
 
