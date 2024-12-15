@@ -143,6 +143,17 @@ class _LoginPageState extends State<LoginPage> {
                 },
                 child: const Text('Login'),
               ),
+              const SizedBox(height: 20),
+              TextButton(
+                onPressed: () {
+                  // Navigate to RegistrationPage
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const RegistrationPage()),
+                  );
+                },
+                child: const Text('Don\'t have an account? Sign up'),
+              ),
             ],
           ),
         ),
@@ -303,15 +314,30 @@ class _GiftListPageState extends State<GiftListPage> {
           );
         },
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const GiftDetailsPage()),
-          );
-          _loadGifts();
-        },
-        child: const Icon(Icons.add),
+      floatingActionButton: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          FloatingActionButton(
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const GiftDetailsPage()),
+              );
+              _loadGifts(); // Refresh list after adding
+            },
+            child: const Icon(Icons.add),
+          ),
+          const SizedBox(width: 10),
+          FloatingActionButton(
+            onPressed: () async {
+              if (gifts.isNotEmpty) {
+                await dbHelper.deleteGift(gifts.last.id!);
+                _loadGifts();
+              }
+            },
+            child: const Icon(Icons.delete),
+          ),
+        ],
       ),
     );
   }
