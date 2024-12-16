@@ -1,90 +1,48 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+
 // Gift Model and DatabaseHelper
 class Gift {
-  int? id;
+  String? id;
   String name;
   String description;
   String category;
   double price;
+  String status; // New field
 
-  Gift({this.id, required this.name, required this.description, required this.category, required this.price});
+  Gift({this.id, required this.name, required this.description, required this.category, required this.price,required this.status});
 
   Map<String, dynamic> toMap() {
     return {
-      'id': id,
       'name': name,
       'description': description,
       'category': category,
       'price': price,
+      'status': status,
     };
   }
 
-  static Gift fromMap(Map<String, dynamic> map) {
+  static Gift fromFirestore(Map<String, dynamic> map, String id) {
     return Gift(
-      id: map['id'],
+      id: id,
       name: map['name'],
       description: map['description'],
       category: map['category'],
       price: map['price'],
+      status: map['status'] ?? "available",
     );
   }
 }
 
-class DatabaseHelper {
-  static Database? _database;
 
-  Future<Database> get database async {
-    if (_database != null) return _database!;
-
-    _database = await _initDatabase();
-    return _database!;
-  }
-
-  Future<Database> _initDatabase() async {
-    final databasePath = await getDatabasesPath();
-    final path = join(databasePath, 'hedieaty.db');
-
-    return openDatabase(path, onCreate: _createDb, version: 1);
-  }
-
-  Future<void> _createDb(Database db, int version) async {
-    await db.execute('''
-      CREATE TABLE gifts(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        description TEXT,
-        category TEXT,
-        price REAL
-      )
-    ''');
-  }
-
-  Future<int> insertGift(Gift gift) async {
-    final db = await database;
-    return await db.insert('gifts', gift.toMap());
-  }
-
-  Future<List<Gift>> getGifts() async {
-    final db = await database;
-    final List<Map<String, dynamic>> maps = await db.query('gifts');
-    return List.generate(maps.length, (i) => Gift.fromMap(maps[i]));
-  }
-
-  Future<int> updateGift(Gift gift) async {
-    final db = await database;
-    return await db.update('gifts', gift.toMap(), where: 'id = ?', whereArgs: [gift.id]);
-  }
-
-  Future<int> deleteGift(int id) async {
-    final db = await database;
-    return await db.delete('gifts', where: 'id = ?', whereArgs: [id]);
-  }
-}
 // LoginPage
 class LoginPage extends StatefulWidget {
   @override
@@ -271,19 +229,47 @@ class GiftListPage extends StatefulWidget {
 }
 
 class _GiftListPageState extends State<GiftListPage> {
-  final dbHelper = DatabaseHelper();
+  // final dbHelper = DatabaseHelper();
   List<Gift> gifts = [];
-
+  late DatabaseReference _giftsRef;
+  late StreamSubscription<DatabaseEvent> _giftsSubscription;
+  
   @override
   void initState() {
     super.initState();
-    _loadGifts();
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      _giftsRef = FirebaseDatabase.instance.ref('users/${user.uid}/gifts');
+      _listenToGifts();
+    }
   }
+void _listenToGifts() {
+  final user = FirebaseAuth.instance.currentUser;
+  if (user != null) {
+    final CollectionReference giftsRef = FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .collection('gifts');
 
-  _loadGifts() async {
-    gifts = await dbHelper.getGifts();
-    setState(() {});
+    giftsRef.snapshots().listen((QuerySnapshot snapshot) {
+      // Each document is processed using `QueryDocumentSnapshot`
+      final updatedGifts = snapshot.docs.map((QueryDocumentSnapshot doc) {
+        return Gift.fromFirestore(doc.data() as Map<String, dynamic>, doc.id);
+      }).toList();
+
+      setState(() {
+        gifts = updatedGifts;
+      });
+    });
   }
+}
+
+
+@override
+void dispose() {
+  super.dispose();
+}
+
 
   @override
   Widget build(BuildContext context) {
@@ -309,7 +295,7 @@ class _GiftListPageState extends State<GiftListPage> {
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (context) => GiftDetailsPage(gift: gift)),
-              ).then((_) => _loadGifts());
+              );
             },
           );
         },
@@ -323,7 +309,7 @@ class _GiftListPageState extends State<GiftListPage> {
                 context,
                 MaterialPageRoute(builder: (context) => const GiftDetailsPage()),
               );
-              _loadGifts(); // Refresh list after adding
+              // _loadGifts(); // Refresh list after adding
             },
             child: const Icon(Icons.add),
           ),
@@ -331,8 +317,15 @@ class _GiftListPageState extends State<GiftListPage> {
           FloatingActionButton(
             onPressed: () async {
               if (gifts.isNotEmpty) {
-                await dbHelper.deleteGift(gifts.last.id!);
-                _loadGifts();
+                final lastGiftId = gifts.last.id;
+                if (lastGiftId != null) {
+                  await FirebaseFirestore.instance
+                      .collection('users')
+                      .doc(FirebaseAuth.instance.currentUser!.uid)
+                      .collection('gifts')
+                      .doc(lastGiftId)
+                      .delete();
+                }
               }
             },
             child: const Icon(Icons.delete),
@@ -353,12 +346,13 @@ class GiftDetailsPage extends StatefulWidget {
 
 class _GiftDetailsPageState extends State<GiftDetailsPage> {
   final _formKey = GlobalKey<FormState>();
-  final dbHelper = DatabaseHelper();
+  // final dbHelper = DatabaseHelper();
   final nameController = TextEditingController();
   final descriptionController = TextEditingController();
   final categoryController = TextEditingController();
   final priceController = TextEditingController();
-
+  String _selectedStatus = "available";
+  
   @override
   void initState() {
     super.initState();
@@ -367,6 +361,7 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
       descriptionController.text = widget.gift!.description;
       categoryController.text = widget.gift!.category;
       priceController.text = widget.gift!.price.toString();
+      _selectedStatus = widget.gift!.status;
     }
   }
 
@@ -390,6 +385,7 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
         child: Form(
           key: _formKey,
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               TextFormField(
                 controller: nameController,
@@ -401,14 +397,20 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
                   return null;
                 },
               ),
+              const SizedBox(height: 12),
+
               TextFormField(
                 controller: descriptionController,
                 decoration: const InputDecoration(labelText: 'Description'),
               ),
+              const SizedBox(height: 12),
+
               TextFormField(
                 controller: categoryController,
                 decoration: const InputDecoration(labelText: 'Category'),
               ),
+              const SizedBox(height: 12),
+
               TextFormField(
                 controller: priceController,
                 decoration: const InputDecoration(labelText: 'Price'),
@@ -423,23 +425,61 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
                   return null;
                 },
               ),
+              const SizedBox(height: 12),
+
+                // Status dropdown
+                DropdownButtonFormField<String>(
+                  value: _selectedStatus,
+                  decoration: const InputDecoration(labelText: 'Status'),
+                  items: ['available', 'reserved', 'sold']
+                      .map((status) => DropdownMenuItem(
+                            value: status,
+                            child: Text(status),
+                          ))
+                      .toList(),
+                  onChanged: (value) {
+                    setState(() {
+                      _selectedStatus = value!;
+                    });
+                  },
+                ),
+                const SizedBox(height: 24),
+
+              // Save button
               ElevatedButton(
                 onPressed: () async {
-                  if (_formKey.currentState!.validate()) {
-                    final gift = Gift(
-                      id: widget.gift?.id,
-                      name: nameController.text,
-                      description: descriptionController.text,
-                      category: categoryController.text,
-                      price: double.parse(priceController.text),
-                    );
-                    final dbHelper = DatabaseHelper();
-                    if (widget.gift == null) {
-                      await dbHelper.insertGift(gift);
-                    } else {
-                      await dbHelper.updateGift(gift);
+              if (_formKey.currentState!.validate()) {
+                final gift = Gift(
+                  id: widget.gift?.id,
+                  name: nameController.text,
+                  description: descriptionController.text,
+                  category: categoryController.text,
+                  price: double.parse(priceController.text),
+                  status: _selectedStatus, 
+                );
+
+                 // Get current user
+                final user = FirebaseAuth.instance.currentUser;
+                if (user != null) {
+                  final CollectionReference userGiftsRef = FirebaseFirestore.instance
+                      .collection('users')
+                      .doc(user.uid)
+                      .collection('gifts');
+
+                  if (widget.gift == null) {
+                    // Adding a new gift
+                    await userGiftsRef.add(gift.toMap());
+                  } else {
+                    // Updating an existing gift
+                    await userGiftsRef.doc(widget.gift!.id).update(gift.toMap());
+                  }
+
+                  Navigator.pop(context); //close page after save
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text("You must be logged in to save gifts."),
+                      ));
                     }
-                    Navigator.pop(context);
                   }
                 },
                 child: const Text('Save'),
