@@ -7,21 +7,27 @@ import 'firebase_options.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 
 // Gift Model and DatabaseHelper
+// Removed duplicate Gift class definition
+
+
+
 class Gift {
   String? id;
   String name;
   String description;
   String category;
   double price;
-  String status; // New field
+  String status;
 
   Gift({this.id, required this.name, required this.description, required this.category, required this.price,required this.status});
 
   Map<String, dynamic> toMap() {
     return {
+      'id': id,
       'name': name,
       'description': description,
       'category': category,
@@ -36,12 +42,125 @@ class Gift {
       name: map['name'],
       description: map['description'],
       category: map['category'],
+      price: (map['price'] as num).toDouble(),
+      status: map['status'] ?? 'available',
+    );
+  }
+
+  static Gift fromSQLite(Map<String, dynamic> map) {
+    return Gift(
+      id: map['id'],
+      name: map['name'],
+      description: map['description'],
+      category: map['category'],
       price: map['price'],
-      status: map['status'] ?? "available",
+      status: map['status'],
+    );
+  }
+
+
+
+
+}
+
+class DatabaseHelper {
+  static final DatabaseHelper _instance = DatabaseHelper._internal();
+  factory DatabaseHelper() => _instance;
+  DatabaseHelper._internal();
+
+  static Database? _database;
+
+  Future<Database> get database async {
+    if (_database != null) return _database!;
+    _database = await _initDatabase();
+    return _database!;
+  }
+
+  Future<Database> _initDatabase() async {
+    final dbPath = await getDatabasesPath();
+    final path = join(dbPath, 'gifts.db');
+
+    return await openDatabase(
+      path,
+      version: 1,
+      onCreate: (db, version) {
+        return db.execute('''
+          CREATE TABLE gifts(
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            description TEXT,
+            category TEXT,
+            price REAL,
+            status TEXT,
+            isSynced INTEGER DEFAULT 0
+          )
+        ''');
+      },
+    );
+  }
+
+  Future<void> insertGift(Gift gift, {bool synced = false}) async {
+    final db = await database;
+    await db.insert(
+      'gifts',
+      {
+        'id': gift.id,
+        'name': gift.name,
+        'description': gift.description,
+        'category': gift.category,
+        'price': gift.price,
+        'status': gift.status,
+        'isSynced': synced ? 1 : 0
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Gift>> getAllGifts() async {
+    final db = await database;
+    final result = await db.query('gifts');
+    return result.map((map) => Gift.fromSQLite(map)).toList();
+  }
+
+  Future<void> deleteGift(String id) async {
+    final db = await database;
+    await db.delete('gifts', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> markAsSynced(String id) async {
+    final db = await database;
+    await db.update(
+      'gifts',
+      {'isSynced': 1},
+      where: 'id = ?',
+      whereArgs: [id],
     );
   }
 }
 
+  Future<void> syncLocalToFirestore() async {
+    final dbHelper = DatabaseHelper();
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user != null) {
+      final unsyncedGifts = await dbHelper.getAllGifts();
+      for (var gift in unsyncedGifts) {
+        //check if the gift is not synced and has an id
+        if(gift.id == null || gift.id!.isEmpty){
+          // Add to Firestore
+          final docRef = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .collection('gifts')
+              .add(gift.toMap());
+
+          // Update SQLite with Firestore ID
+          gift.id = docRef.id;
+          await dbHelper.insertGift(gift, synced: true);
+        }
+      }
+    }
+  }
 
 // LoginPage
 class LoginPage extends StatefulWidget {
@@ -240,35 +359,60 @@ class _GiftListPageState extends State<GiftListPage> {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
       _giftsRef = FirebaseDatabase.instance.ref('users/${user.uid}/gifts');
-      _listenToGifts();
+      _fetchAndSyncGifts();
+      syncLocalToFirestore(); // Sync local changes to Firestore
+    }
+    Connectivity().onConnectivityChanged.listen((ConnectivityResult result) {
+      if (result != ConnectivityResult.none) {
+        syncLocalToFirestore(); // Trigger sync when back online
+      }
+    });
+
+  }
+
+  void _fetchAndSyncGifts() async {
+    final dbHelper = DatabaseHelper();
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user != null) {
+      final giftsRef = FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('gifts');
+
+      giftsRef.snapshots().listen((QuerySnapshot snapshot) async {
+        for (var doc in snapshot.docs) {
+          final gift = Gift.fromFirestore(doc.data() as Map<String, dynamic>, doc.id);
+
+          // Insert only if the gift does not already exist in SQLite
+          final existingGifts = await dbHelper.getAllGifts();
+          final exists = existingGifts.any((g) => g.id == gift.id);
+
+          if (!exists) {
+            await dbHelper.insertGift(gift, synced: true);
+          }
+        }
+
+        _loadGiftsFromSQLite(); // Refresh the UI
+      });
     }
   }
-void _listenToGifts() {
-  final user = FirebaseAuth.instance.currentUser;
-  if (user != null) {
-    final CollectionReference giftsRef = FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .collection('gifts');
 
-    giftsRef.snapshots().listen((QuerySnapshot snapshot) {
-      // Each document is processed using `QueryDocumentSnapshot`
-      final updatedGifts = snapshot.docs.map((QueryDocumentSnapshot doc) {
-        return Gift.fromFirestore(doc.data() as Map<String, dynamic>, doc.id);
-      }).toList();
-
-      setState(() {
-        gifts = updatedGifts;
-      });
+  void _loadGiftsFromSQLite() async {
+    final dbHelper = DatabaseHelper();
+    final loadedGifts = await dbHelper.getAllGifts();
+    setState(() {
+      gifts = loadedGifts;
     });
   }
-}
 
 
-@override
-void dispose() {
-  super.dispose();
-}
+
+  @override
+  void dispose() {
+    _giftsSubscription.cancel();
+    super.dispose();
+  }  
 
 
   @override
@@ -318,13 +462,24 @@ void dispose() {
             onPressed: () async {
               if (gifts.isNotEmpty) {
                 final lastGiftId = gifts.last.id;
-                if (lastGiftId != null) {
+                final user = FirebaseAuth.instance.currentUser;
+
+                if (lastGiftId != null && user != null) {
+                  // Delete from Firestore
                   await FirebaseFirestore.instance
                       .collection('users')
-                      .doc(FirebaseAuth.instance.currentUser!.uid)
+                      .doc(user.uid)
                       .collection('gifts')
                       .doc(lastGiftId)
                       .delete();
+
+                  // Delete from SQLite
+                  final dbHelper = DatabaseHelper();
+                  await dbHelper.deleteGift(lastGiftId);
+
+                  setState(() {
+                    gifts.removeWhere((gift) => gift.id == lastGiftId);
+                  });
                 }
               }
             },
@@ -346,7 +501,6 @@ class GiftDetailsPage extends StatefulWidget {
 
 class _GiftDetailsPageState extends State<GiftDetailsPage> {
   final _formKey = GlobalKey<FormState>();
-  // final dbHelper = DatabaseHelper();
   final nameController = TextEditingController();
   final descriptionController = TextEditingController();
   final categoryController = TextEditingController();
@@ -363,6 +517,12 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
       priceController.text = widget.gift!.price.toString();
       _selectedStatus = widget.gift!.status;
     }
+
+    Connectivity().onConnectivityChanged.listen((ConnectivityResult result) {
+      if (result != ConnectivityResult.none) {
+        syncLocalToFirestore(); // Trigger sync when back online
+      }
+    });    
   }
 
   @override
@@ -378,14 +538,13 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.gift == null ? 'Add Gift' : 'Edit Gift'),
+        title: const Text('Gift Details'),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
+      body: Form(
+        key: _formKey,
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               TextFormField(
                 controller: nameController,
@@ -397,20 +556,14 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
                   return null;
                 },
               ),
-              const SizedBox(height: 12),
-
               TextFormField(
                 controller: descriptionController,
                 decoration: const InputDecoration(labelText: 'Description'),
               ),
-              const SizedBox(height: 12),
-
               TextFormField(
                 controller: categoryController,
                 decoration: const InputDecoration(labelText: 'Category'),
               ),
-              const SizedBox(height: 12),
-
               TextFormField(
                 controller: priceController,
                 decoration: const InputDecoration(labelText: 'Price'),
@@ -425,63 +578,55 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
                   return null;
                 },
               ),
-              const SizedBox(height: 12),
-
-                // Status dropdown
-                DropdownButtonFormField<String>(
-                  value: _selectedStatus,
-                  decoration: const InputDecoration(labelText: 'Status'),
-                  items: ['available', 'reserved', 'sold']
-                      .map((status) => DropdownMenuItem(
-                            value: status,
-                            child: Text(status),
-                          ))
-                      .toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedStatus = value!;
-                    });
-                  },
-                ),
-                const SizedBox(height: 24),
-
-              // Save button
-              ElevatedButton(
-                onPressed: () async {
-              if (_formKey.currentState!.validate()) {
-                final gift = Gift(
-                  id: widget.gift?.id,
-                  name: nameController.text,
-                  description: descriptionController.text,
-                  category: categoryController.text,
-                  price: double.parse(priceController.text),
-                  status: _selectedStatus, 
-                );
-
-                 // Get current user
-                final user = FirebaseAuth.instance.currentUser;
-                if (user != null) {
-                  final CollectionReference userGiftsRef = FirebaseFirestore.instance
-                      .collection('users')
-                      .doc(user.uid)
-                      .collection('gifts');
-
-                  if (widget.gift == null) {
-                    // Adding a new gift
-                    await userGiftsRef.add(gift.toMap());
-                  } else {
-                    // Updating an existing gift
-                    await userGiftsRef.doc(widget.gift!.id).update(gift.toMap());
-                  }
-
-                  Navigator.pop(context); //close page after save
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text("You must be logged in to save gifts."),
-                      ));
-                    }
-                  }
+              DropdownButtonFormField<String>(
+                value: _selectedStatus,
+                items: ['available', 'Pending', 'Completed'].map((String status) {
+                  return DropdownMenuItem<String>(
+                    value: status,
+                    child: Text(status),
+                  );
+                }).toList(),
+                onChanged: (newValue) {
+                  setState(() {
+                    _selectedStatus = newValue!;
+                  });
                 },
+                decoration: const InputDecoration(labelText: 'Status'),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+              onPressed: () async {
+                if (_formKey.currentState!.validate()) {
+                  final user = FirebaseAuth.instance.currentUser;
+
+                  if (user != null) {
+                    // Prepare the Gift data
+                    final newGift = Gift(
+                      name: nameController.text,
+                      description: descriptionController.text,
+                      category: categoryController.text,
+                      price: double.tryParse(priceController.text) ?? 0.0,
+                      status: _selectedStatus,
+                    );
+
+                    // Add the Gift to Firestore
+                    final docRef = await FirebaseFirestore.instance
+                        .collection('users')
+                        .doc(user.uid)
+                        .collection('gifts')
+                        .add(newGift.toMap());
+
+                    // Use Firestore's generated ID
+                    newGift.id = docRef.id;
+
+                    // Cache the new Gift in SQLite
+                    final dbHelper = DatabaseHelper();
+                    await dbHelper.insertGift(newGift, synced: true);
+
+                    Navigator.pop(context); // Return to the previous screen
+                  }
+                }
+              },
                 child: const Text('Save'),
               ),
             ],
@@ -490,6 +635,11 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
       ),
     );
   }
+}
+
+Future<bool> isOnline() async {
+  var connectivityResult = await Connectivity().checkConnectivity();
+  return connectivityResult != ConnectivityResult.none;
 }
 
 void main() async {
