@@ -14,6 +14,179 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 // Removed duplicate Gift class definition
 
 
+Future<void> syncLocalToFirestore() async {
+  final user = FirebaseAuth.instance.currentUser;
+
+  if (user != null) {
+    final dbHelper = DatabaseHelper();    
+    final unsyncedGifts = await dbHelper.getAllGifts(user.uid);
+    for (var gift in unsyncedGifts) {
+      //check if the gift is not synced and has an id
+      if(gift.id == null || gift.id!.isEmpty){
+        // Add to Firestore
+        final docRef = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .collection('gifts')
+            .add(gift.toMap());
+        gift.id = docRef.id;
+        await dbHelper.insertGift(gift, user.uid, synced: true);
+      }
+    }
+  }
+}
+
+class DatabaseHelper {
+  static final DatabaseHelper _instance = DatabaseHelper._internal();
+  factory DatabaseHelper() => _instance;
+  DatabaseHelper._internal();
+
+  static Database? _database;
+
+  Future<Database> get database async {
+    if (_database != null) return _database!;
+    _database = await _initDatabase();
+    return _database!;
+  }
+
+  Future<Database> _initDatabase() async {
+    final dbPath = await getDatabasesPath();
+    final path = join(dbPath, 'hedieaty.db');
+
+    return await openDatabase(
+      path,
+      version: 2,
+      onCreate: (db, version) {
+        return db.execute('''
+          CREATE TABLE gifts(
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            description TEXT,
+            category TEXT,
+            price REAL,
+            status TEXT,
+            user_id TEXT,   -- Add user_id field
+            isSynced INTEGER DEFAULT 0
+          )
+        ''');
+        // Create friends table
+        db.execute('''
+          CREATE TABLE friends(
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            phoneNumber TEXT,
+            user_id TEXT
+          )
+        ''');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 3) {  // Increment version number
+          await db.execute('ALTER TABLE gifts ADD COLUMN user_id TEXT');
+        }
+      }
+    );
+  }
+
+  Future<void> insertGift(Gift gift, String userId, {bool synced = false}) async {
+    final db = await database;
+    await db.insert(
+      'gifts',
+      {
+        'id': gift.id,
+        'name': gift.name,
+        'description': gift.description,
+        'category': gift.category,
+        'price': gift.price,
+        'status': gift.status,
+        'user_id': userId,  // Store user ID
+        'isSynced': synced ? 1 : 0
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+
+  Future<List<Gift>> getAllGifts(String userId) async {
+    final db = await database;
+    final result = await db.query('gifts', where: 'user_id = ?', whereArgs: [userId]);
+    return result.map((map) => Gift.fromSQLite(map)).toList();
+}
+
+  Future<void> deleteGift(String id) async {
+    final db = await database;
+    await db.delete('gifts', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> markAsSynced(String id) async {
+    final db = await database;
+    await db.update(
+      'gifts',
+      {'isSynced': 1},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+// Friend methods
+   Future<void> insertFriend(Friend friend, String userId) async {
+     final db = await database;
+      await db.insert(
+        'friends',
+        {
+          'id': friend.id,
+          'name': friend.name,
+          'phoneNumber': friend.phoneNumber,
+          'user_id': userId,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    Future<List<Friend>> getAllFriends(String userId) async {
+      final db = await database;
+      final result = await db.query('friends', where: 'user_id = ?', whereArgs: [userId]);
+      return result.map((map) => Friend.fromSQLite(map)).toList();
+    }
+
+
+   Future<void> deleteFriend(String id) async {
+      final db = await database;
+      await db.delete('friends', where: 'id = ?', whereArgs: [id]);
+   }  
+}
+
+class Friend {
+  String? id;
+  String name;
+  String phoneNumber;
+  // String? profilePictureUrl; // For later use
+
+  Friend({this.id, required this.name, required this.phoneNumber,});
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'phoneNumber': phoneNumber,
+    };
+  }
+
+  static Friend fromSQLite(Map<String, dynamic> map) {
+    return Friend(
+      id: map['id'],
+      name: map['name'],
+      phoneNumber: map['phoneNumber'],
+    );
+  }
+
+  static Friend fromFirestore(Map<String, dynamic> map, String id) {
+    return Friend(
+      id: id,
+      name: map['name'],
+      phoneNumber: map['phoneNumber'],
+    );
+  }
+}
 
 class Gift {
   String? id;
@@ -63,107 +236,92 @@ class Gift {
 
 }
 
-class DatabaseHelper {
-  static final DatabaseHelper _instance = DatabaseHelper._internal();
-  factory DatabaseHelper() => _instance;
-  DatabaseHelper._internal();
+////////////
+class AddFriendPage extends StatefulWidget {
+  const AddFriendPage({super.key});
 
-  static Database? _database;
+  @override
+  _AddFriendPageState createState() => _AddFriendPageState();
+}
 
-  Future<Database> get database async {
-    if (_database != null) return _database!;
-    _database = await _initDatabase();
-    return _database!;
+class _AddFriendPageState extends State<AddFriendPage> {
+  final TextEditingController phoneController = TextEditingController();
+
+  Future<void> addFriend(String phoneNumber) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      // Search for the user with the entered phone number
+      QuerySnapshot query = await FirebaseFirestore.instance
+          .collection('users')
+          .where('phone', isEqualTo: phoneNumber)
+          .get();
+
+      if (query.docs.isNotEmpty) {
+        final friendData = query.docs.first;
+        final friendUid = friendData.id; // The friend's UID
+        final friendName = friendData['name'];
+
+        // Add the friend to the current user's friends list
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .collection('friends')
+            .doc(friendUid)
+            .set({
+          'name': friendName,
+          'phone': phoneNumber,
+        });
+
+        print('Friend added successfully!');
+      } else {
+        print('User with this phone number does not exist.');
+      }
+    } catch (e) {
+      print('Failed to add friend: $e');
+    }
   }
 
-  Future<Database> _initDatabase() async {
-    final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'gifts.db');
-
-    return await openDatabase(
-      path,
-      version: 1,
-      onCreate: (db, version) {
-        return db.execute('''
-          CREATE TABLE gifts(
-            id TEXT PRIMARY KEY,
-            name TEXT,
-            description TEXT,
-            category TEXT,
-            price REAL,
-            status TEXT,
-            isSynced INTEGER DEFAULT 0
-          )
-        ''');
-      },
-    );
-  }
-
-  Future<void> insertGift(Gift gift, {bool synced = false}) async {
-    final db = await database;
-    await db.insert(
-      'gifts',
-      {
-        'id': gift.id,
-        'name': gift.name,
-        'description': gift.description,
-        'category': gift.category,
-        'price': gift.price,
-        'status': gift.status,
-        'isSynced': synced ? 1 : 0
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-  }
-
-  Future<List<Gift>> getAllGifts() async {
-    final db = await database;
-    final result = await db.query('gifts');
-    return result.map((map) => Gift.fromSQLite(map)).toList();
-  }
-
-  Future<void> deleteGift(String id) async {
-    final db = await database;
-    await db.delete('gifts', where: 'id = ?', whereArgs: [id]);
-  }
-
-  Future<void> markAsSynced(String id) async {
-    final db = await database;
-    await db.update(
-      'gifts',
-      {'isSynced': 1},
-      where: 'id = ?',
-      whereArgs: [id],
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Add Friend'),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            TextField(
+              controller: phoneController,
+              decoration: const InputDecoration(
+                labelText: 'Friend\'s Phone Number',
+              ),
+            ),
+            const SizedBox(height: 16.0),
+            ElevatedButton(
+              onPressed: () async {
+                await addFriend(phoneController.text);
+                Navigator.pop(context);
+              },
+              child: const Text('Add Friend'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
 
-  Future<void> syncLocalToFirestore() async {
-    final dbHelper = DatabaseHelper();
-    final user = FirebaseAuth.instance.currentUser;
 
-    if (user != null) {
-      final unsyncedGifts = await dbHelper.getAllGifts();
-      for (var gift in unsyncedGifts) {
-        //check if the gift is not synced and has an id
-        if(gift.id == null || gift.id!.isEmpty){
-          // Add to Firestore
-          final docRef = await FirebaseFirestore.instance
-              .collection('users')
-              .doc(user.uid)
-              .collection('gifts')
-              .add(gift.toMap());
 
-          // Update SQLite with Firestore ID
-          gift.id = docRef.id;
-          await dbHelper.insertGift(gift, synced: true);
-        }
-      }
-    }
-  }
+
 
 // LoginPage
 class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
+
   @override
   _LoginPageState createState() => _LoginPageState();
 }
@@ -212,15 +370,23 @@ class _LoginPageState extends State<LoginPage> {
                         email: emailController.text,
                         password: passwordController.text,
                       );
+                      //cc1
+                      // Navigator.pushReplacement(
+                      //   context,
+                      //   MaterialPageRoute(builder: (context) => const HomePage()),
+                      // );                      
                       // Navigate to Gift List screen after successful login
                     } on FirebaseAuthException catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(e.message ?? 'Login failed')),
+                      );                      
                       // Handle login errors (e.g., wrong credentials)
                     }
                   }
                 },
                 child: const Text('Login'),
               ),
-              const SizedBox(height: 20),
+              
               TextButton(
                 onPressed: () {
                   // Navigate to RegistrationPage
@@ -251,6 +417,8 @@ class _RegistrationPageState extends State<RegistrationPage> {
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
   final confirmPasswordController = TextEditingController();
+  final nameController = TextEditingController();
+  final phoneController = TextEditingController();
 
   @override
   Widget build(BuildContext context) {
@@ -272,6 +440,16 @@ class _RegistrationPageState extends State<RegistrationPage> {
                   return null;
                 },
               ),
+              TextFormField(
+                controller: phoneController,
+                decoration: InputDecoration(labelText: 'Phone Number'),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter your phone number';
+                  }
+                  return null;
+                },
+              ),              
               TextFormField(
                 controller: passwordController,
                 decoration: const InputDecoration(labelText: 'Password'),
@@ -308,8 +486,15 @@ class _RegistrationPageState extends State<RegistrationPage> {
                       );
                       // Navigate to the next screen or show a success message
                       if (userCredential.user != null) {
-                        Navigator.pop(context); // Return to previous screen
+                        await FirebaseFirestore.instance
+                            .collection('users')
+                            .doc(userCredential.user!.uid)
+                            .set({
+                          'name': nameController.text, // Replace with actual name input
+                          'phone': phoneController.text, // Replace with an input for phone number
+                        });
                       }
+                      Navigator.pop(context);
                     } on FirebaseAuthException catch (e) {
                       String errorMessage = "Registration failed.";
                       if (e.code == 'weak-password') {
@@ -385,11 +570,11 @@ class _GiftListPageState extends State<GiftListPage> {
           final gift = Gift.fromFirestore(doc.data() as Map<String, dynamic>, doc.id);
 
           // Insert only if the gift does not already exist in SQLite
-          final existingGifts = await dbHelper.getAllGifts();
+          final existingGifts = await dbHelper.getAllGifts(user.uid);
           final exists = existingGifts.any((g) => g.id == gift.id);
 
           if (!exists) {
-            await dbHelper.insertGift(gift, synced: true);
+            await dbHelper.insertGift(gift, user.uid, synced: true);
           }
         }
 
@@ -398,13 +583,16 @@ class _GiftListPageState extends State<GiftListPage> {
     }
   }
 
-  void _loadGiftsFromSQLite() async {
-    final dbHelper = DatabaseHelper();
-    final loadedGifts = await dbHelper.getAllGifts();
+void _loadGiftsFromSQLite() async {
+  final dbHelper = DatabaseHelper();
+  final user = FirebaseAuth.instance.currentUser;
+  if (user != null) {
+    final loadedGifts = await dbHelper.getAllGifts(user.uid);
     setState(() {
       gifts = loadedGifts;
     });
   }
+}  
 
 
 
@@ -486,6 +674,47 @@ class _GiftListPageState extends State<GiftListPage> {
             child: const Icon(Icons.delete),
           ),
         ],
+      ),
+    );
+  }
+}
+
+
+
+class FriendGiftListPage extends StatelessWidget {
+  final String friendId;
+  const FriendGiftListPage({super.key, required this.friendId});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Friend\'s Gift List')),
+      body: StreamBuilder(
+        stream: FirebaseFirestore.instance
+            .collection('users')
+            .doc(friendId)
+            .collection('gifts')
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+            return const Center(child: Text('No gifts available.'));
+          }
+
+          final gifts = snapshot.data!.docs;
+          return ListView.builder(
+            itemCount: gifts.length,
+            itemBuilder: (context, index) {
+              final gift = gifts[index];
+              return ListTile(
+                title: Text(gift['name']),
+                subtitle: Text(gift['description']),
+              );
+            },
+          );
+        },
       ),
     );
   }
@@ -621,7 +850,7 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
 
                     // Cache the new Gift in SQLite
                     final dbHelper = DatabaseHelper();
-                    await dbHelper.insertGift(newGift, synced: true);
+                    await dbHelper.insertGift(newGift, user.uid, synced: true);
 
                     Navigator.pop(context); // Return to the previous screen
                   }
@@ -663,13 +892,14 @@ class HedieatyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Hedieaty',
       theme: ThemeData(primarySwatch: Colors.blue),
-      home: const HomePage(),
+      // cc2
+      // home: const AuthGate(),
+      home: const AuthGate(),
     );
   }
 }
-
-class HomePage extends StatelessWidget {
-  const HomePage({super.key});
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -680,10 +910,101 @@ class HomePage extends StatelessWidget {
           return const Center(child: CircularProgressIndicator());
         }
         if (snapshot.hasData) {
-          return const GiftListPage();
+          return const HomePage();
+        } else {
+          return LoginPage();
         }
-        return LoginPage();
       },
+    );
+  }
+}
+
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+ List<Friend> friends = [];
+
+ @override
+  void initState() {
+    super.initState();
+    _loadFriends();
+  } 
+  
+  void _loadFriends() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('friends')
+          .snapshots()
+          .listen((snapshot) {
+        final loadedFriends = snapshot.docs.map((doc) {
+          return Friend.fromFirestore(doc.data() as Map<String, dynamic>, doc.id);
+        }).toList();
+        setState(() {
+          friends = loadedFriends;
+        });
+      });
+    }
+  }
+
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Home Page'),
+        actions: [
+          ElevatedButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const GiftListPage()),
+              );
+            },
+            child: const Text('My Gifts'),
+          ),          
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await FirebaseAuth.instance.signOut();
+            },
+          ),
+        ],
+      ),
+      body: ListView.builder(
+        itemCount: friends.length,
+        itemBuilder: (context, index) {
+          final friend = friends[index];
+          return ListTile(
+            title: Text(friend.name),
+            subtitle: Text(friend.phoneNumber),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => FriendGiftListPage(friendId: friend.id!),
+                ),
+              );
+            },
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const AddFriendPage()),
+          ).then((_) => _loadFriends()); // Refresh the list after adding a friend
+        },
+        child: const Icon(Icons.person_add),
+      ),
     );
   }
 }
