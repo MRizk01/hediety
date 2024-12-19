@@ -174,18 +174,20 @@ class Friend {
   static Friend fromSQLite(Map<String, dynamic> map) {
     return Friend(
       id: map['id'],
-      name: map['name'],
-      phoneNumber: map['phoneNumber'],
+      name: map['name'] ?? 'Unknown', 
+      phoneNumber: map['phoneNumber'] ?? 'Unknown', 
     );
   }
+
 
   static Friend fromFirestore(Map<String, dynamic> map, String id) {
     return Friend(
       id: id,
-      name: map['name'],
-      phoneNumber: map['phoneNumber'],
+      name: map['name'] ?? 'Unknown', 
+      phoneNumber: map['phoneNumber'] ?? 'Unknown', 
     );
   }
+
 }
 
 class Gift {
@@ -267,6 +269,9 @@ class _AddFriendPageState extends State<AddFriendPage> {
         final friendData = query.docs.first;
         final friendUid = friendData.id; // The friend's UID
         final friendName = friendData['name'] ?? 'Unknown';
+        final friendEmail = friendData['email'] ?? 'Unknown';
+        final friendPhone = friendData['phone'] ?? 'Unknown';        
+
 
         // Add the friend to the current user's friends list
         await FirebaseFirestore.instance
@@ -276,16 +281,16 @@ class _AddFriendPageState extends State<AddFriendPage> {
             .doc(friendUid)
             .set({
           'name': friendName,
-          'phone': phoneNumber,
+          'email': friendEmail,
+          'phone': friendPhone,
         });
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Friend added successfully!')),
-        );
+
+
 
         // Success feedback
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Friend added successfully!')),
+          SnackBar(content: Text('$friendName has been added as a friend.')),
         );
 
         Navigator.pop(context); // Return to the home page
@@ -315,17 +320,12 @@ class _AddFriendPageState extends State<AddFriendPage> {
           children: [
             TextField(
               controller: phoneController,
-              decoration: const InputDecoration(
-                labelText: 'Friend\'s Phone Number',
-              ),
+              decoration: InputDecoration(labelText: 'Friend\'s Phone Number'),
             ),
             const SizedBox(height: 16.0),
             ElevatedButton(
-              onPressed: () async {
-                await addFriend(context, phoneController.text);
-                Navigator.pop(context);
-              },
-              child: const Text('Add Friend'),
+              onPressed: () => addFriend(context, phoneController.text),
+              child: Text('Add Friend'),
             ),
           ],
         ),
