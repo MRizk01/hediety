@@ -395,15 +395,13 @@ class _AddFriendPageState extends State<AddFriendPage> {
           'phone': friendPhone,
         });
 
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('$friendName has been added as a friend.')),
+          );
+          Navigator.pop(context);
+        }
 
-
-
-        // Success feedback
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$friendName has been added as a friend.')),
-        );
-
-        Navigator.pop(context); // Return to the home page
       } else {
         // No user found with this phone number
         ScaffoldMessenger.of(context).showSnackBar(
@@ -576,10 +574,11 @@ class _RegistrationPageState extends State<RegistrationPage> {
             'phone': phoneController.text.trim(),
             'email': emailController.text.trim(),
           });
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('User registered successfully!')),
-          );
+          if (mounted){
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('User registered successfully!')),
+            );
+          }
         }
       } on FirebaseAuthException catch (e) {
         String errorMessage = "Registration failed.";
@@ -741,7 +740,7 @@ class _EventListPageState extends State<EventListPage> {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => GiftListPage(eventId: event.id!),
+                  builder: (context) => GiftListPage(eventId: event.id!, userId: FirebaseAuth.instance.currentUser!.uid),
                 ),
               );
             },
@@ -811,7 +810,9 @@ class _AddEventPageState extends State<AddEventPage> {
             .doc(newEvent.id)
             .set(newEvent.toMap());
 
-        Navigator.pop(context);
+        if (mounted) {
+          Navigator.pop(context);
+        }
       }
     }
   }
@@ -860,82 +861,82 @@ class _AddEventPageState extends State<AddEventPage> {
 // UI Code (GiftListPage and GiftDetailsPage)
 class GiftListPage extends StatefulWidget {
   final String? eventId;
+  final String userId;
 
-  const GiftListPage({super.key, this.eventId});
+  const GiftListPage({super.key, this.eventId, required this.userId});
 
   @override
   State<GiftListPage> createState() => _GiftListPageState();
 }
 
 //
- class _GiftListPageState extends State<GiftListPage> {
+class _GiftListPageState extends State<GiftListPage> {
   List<Gift> gifts = [];
   late StreamSubscription<QuerySnapshot> _giftsSubscription;
   final logger = Logger();
 
   @override
   void initState() {
-    super.initState();
+  super.initState();
     _loadGifts();
-
-    Connectivity().onConnectivityChanged.listen((ConnectivityResult result) {
+  Connectivity().onConnectivityChanged.listen((ConnectivityResult result) {
       if (result != ConnectivityResult.none) {
         syncLocalToFirestore(); // Trigger sync when back online
       }
     });
-  }
+    }
 
   void _loadGifts() async {
-    final user = FirebaseAuth.instance.currentUser;
+  final dbHelper = DatabaseHelper();
+  logger.i('GiftListPage: Listening for gifts for user: ${widget.userId}');    
+  final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
-      final dbHelper = DatabaseHelper();
-      logger.i('GiftListPage: Listening for gifts for user: ${user.uid}');
 
-      _giftsSubscription = FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .collection('gifts')
-          .snapshots()
-          .listen((snapshot) async {
-        logger.i('GiftListPage: Firestore data changed. ${snapshot.docs.length} docs.');
-        final firebaseGifts = snapshot.docs
-            .map((doc) => Gift.fromFirestore(doc.data(), doc.id))
-            .toList();
 
-        logger.i("GiftListPage: FirebaseGifts: ${firebaseGifts.map((e) => e.toMap())}");
+  _giftsSubscription = FirebaseFirestore.instance
+      .collection('users')
+      .doc(widget.userId)
+      .collection('gifts')
+      .snapshots()
+      .listen((snapshot) async {
+    logger.i('GiftListPage: Firestore data changed. ${snapshot.docs.length} docs.');
+    final firebaseGifts = snapshot.docs
+        .map((doc) => Gift.fromFirestore(doc.data(), doc.id))
+        .toList();
 
-        for (final gift in firebaseGifts) {
-          await dbHelper.insertGift(gift, user.uid, synced: true);
-        }
+      logger.i("GiftListPage: FirebaseGifts: ${firebaseGifts.map((e) => e.toMap())}");
 
-        final localGifts = await dbHelper.getAllGifts(user.uid);
-
-        if (widget.eventId != null && widget.eventId!.isNotEmpty) {
-          logger.i('GiftListPage: Filtering by eventId: ${widget.eventId}');
-          setState(() {
-            gifts = localGifts.where((element) {
-              final isMatchingEvent = element.eventId != null && element.eventId == widget.eventId;
-              logger.i('GiftListPage: Checking gift ${element.name} eventId: ${element.eventId}, match: $isMatchingEvent');
-              return isMatchingEvent;
-            }).toList();
-
-            logger.i("GiftListPage: gifts after filter: ${gifts.map((e) => e.toMap())}");
-          });
-        } else {
-          setState(() {
-            gifts = localGifts;
-            logger.i("GiftListPage: All local gifts ${gifts.map((e) => e.toMap())}");
-          });
-        }
-      });
+    for (final gift in firebaseGifts) {
+      await dbHelper.insertGift(gift, widget.userId, synced: true);
     }
-  }
 
-  @override
-  void dispose() {
-    _giftsSubscription.cancel();
-    super.dispose();
+    final localGifts = await dbHelper.getAllGifts(widget.userId);
+
+    if (widget.eventId != null && widget.eventId!.isNotEmpty) {
+      logger.i('GiftListPage: Filtering by eventId: ${widget.eventId}');
+        setState(() {
+          gifts = localGifts.where((element) {
+            final isMatchingEvent = element.eventId != null && element.eventId == widget.eventId;
+            logger.i('GiftListPage: Checking gift ${element.name} eventId: ${element.eventId}, match: $isMatchingEvent');
+            return isMatchingEvent;
+          }).toList();
+
+        logger.i("GiftListPage: gifts after filter: ${gifts.map((e) => e.toMap())}");
+      });
+        } else {
+        setState(() {
+          gifts = localGifts;
+          logger.i("GiftListPage: All local gifts ${gifts.map((e) => e.toMap())}");
+        });
+      }
+    });
   }
+}
+    @override
+    void dispose() {
+      _giftsSubscription.cancel();
+        super.dispose();
+      }
 
   @override
   Widget build(BuildContext context) {
@@ -986,7 +987,7 @@ class GiftListPage extends StatefulWidget {
             child: const Icon(Icons.add),
           ),
           const SizedBox(width: 10),
-           FloatingActionButton(
+          FloatingActionButton(
             onPressed: () async {
               if (gifts.isNotEmpty) {
                 final lastGiftId = gifts.last.id;
@@ -996,7 +997,7 @@ class GiftListPage extends StatefulWidget {
                   // Delete from Firestore
                   await FirebaseFirestore.instance
                       .collection('users')
-                      .doc(user.uid)
+                      .doc(widget.userId)
                       .collection('gifts')
                       .doc(lastGiftId)
                       .delete();
@@ -1018,8 +1019,6 @@ class GiftListPage extends StatefulWidget {
     );
   }
 }
-
-
 class FriendGiftListPage extends StatelessWidget {
   final String friendId;
   const FriendGiftListPage({super.key, required this.friendId});
@@ -1083,20 +1082,20 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
   @override
   void initState() {
     super.initState();
-    if (widget.gift != null) {
-      nameController.text = widget.gift!.name;
-      descriptionController.text = widget.gift!.description;
-      categoryController.text = widget.gift!.category;
-      priceController.text = widget.gift!.price.toString();
-      _selectedStatus = widget.gift!.status;
+       if (widget.gift != null) {
+          nameController.text = widget.gift!.name;
+          descriptionController.text = widget.gift!.description;
+          categoryController.text = widget.gift!.category;
+          priceController.text = widget.gift!.price.toString();
+          _selectedStatus = widget.gift!.status;
     }
 
-    Connectivity().onConnectivityChanged.listen((ConnectivityResult result) {
+   Connectivity().onConnectivityChanged.listen((ConnectivityResult result) {
       if (result != ConnectivityResult.none) {
-        syncLocalToFirestore(); // Trigger sync when back online
-      }
-    });    
-  }
+          syncLocalToFirestore(); // Trigger sync when back online
+       }
+    });
+}
 
   @override
   void dispose() {
@@ -1153,7 +1152,7 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
               ),
               DropdownButtonFormField<String>(
                 value: _selectedStatus,
-                items: ['available', 'Pending', 'Completed'].map((String status) {
+                items: ['available', 'pledged', 'purchased'].map((String status) {
                   return DropdownMenuItem<String>(
                     value: status,
                     child: Text(status),
@@ -1199,18 +1198,31 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
                     final dbHelper = DatabaseHelper();
                     await dbHelper.insertGift(newGift, user.uid, synced: true);
 
-                    Navigator.pop(context); // Return to the previous screen
-                  }
-                }
-              },
-                child: const Text('Save'),
-              ),
-            ],
-          ),
+                    if(widget.eventId != null) {
+                          Navigator.pop(context);
+                          Navigator.pop(context);
+                        if (mounted) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => GiftListPage(eventId: widget.eventId, userId: FirebaseAuth.instance.currentUser!.uid),
+                            ),
+                          );
+                        }
+                    } else {
+                          Navigator.pop(context);
+                      }
+                        }
+                       }
+                   },
+                    child: const Text('Save'),
+                  ),
+              ],
+           ),
         ),
       ),
-    );
-  }
+  );
+ }
 }
 
 Future<bool> isOnline() async {
@@ -1274,33 +1286,50 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
- List<Friend> friends = [];
+  List<Friend> friends = [];
 
- @override
+  @override
   void initState() {
     super.initState();
-    _loadFriends();
-  } 
-  
-  void _loadFriends() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .collection('friends')
-          .snapshots()
-          .listen((snapshot) {
-        final loadedFriends = snapshot.docs.map((doc) {
-          return Friend.fromFirestore(doc.data(), doc.id);
-        }).toList();
-        setState(() {
-          friends = loadedFriends;
-        });
-      });
-    }
+    _loadFriendsWithEventCounts();
   }
 
+  Future<void> _loadFriendsWithEventCounts() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return; // Handle user not logged in case
+    FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .collection('friends')
+        .snapshots()
+        .listen((friendsSnapshot) async {
+      final loadedFriends = friendsSnapshot.docs
+          .map((doc) => Friend.fromFirestore(doc.data(), doc.id))
+          .toList();
+
+      // Fetch events for each friend
+      List<FriendWithEvents> friendsWithEvents = [];
+      for (var friend in loadedFriends) {
+        final eventCount = await _getUpcomingEventCount(friend.id!);
+        friendsWithEvents.add(
+            FriendWithEvents(friend: friend, upcomingEventCount: eventCount));
+      }
+      setState(() {
+        friends = friendsWithEvents.map((e) => e.friend).toList();
+      });
+    });
+  }
+
+  Future<int> _getUpcomingEventCount(String friendId) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return 0;
+    final snapshot = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(friendId)
+        .collection('events')
+        .get();
+    return snapshot.docs.length;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1310,10 +1339,13 @@ class _HomePageState extends State<HomePage> {
         actions: [
           ElevatedButton(
             onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const GiftListPage()),
-              );
+              final user = FirebaseAuth.instance.currentUser;
+              if (user != null) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => GiftListPage(userId: user.uid)),
+                );
+              }
             },
             child: const Text('My Gifts'),
           ),
@@ -1340,28 +1372,116 @@ class _HomePageState extends State<HomePage> {
           final friend = friends[index];
           return ListTile(
             title: Text(friend.name),
-            subtitle: Text(friend.phoneNumber),
+            subtitle: Text('${friend.phoneNumber}'),
             onTap: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => FriendGiftListPage(friendId: friend.id!),
+                  builder: (context) =>
+                      FriendEventListPage(friendId: friend.id!),
                 ),
               );
             },
           );
         },
       ),
-      
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const AddFriendPage()),
-          ).then((_) => _loadFriends()); // Refresh the list after adding a friend
-        },
-        child: const Icon(Icons.person_add),
+       floatingActionButton: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+         children: [
+            FloatingActionButton(
+            heroTag: "addEventButton",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const AddEventPage()),
+              );
+            },
+            child: const Icon(Icons.add),
+          ),
+          const SizedBox(width: 10),
+          FloatingActionButton(
+            heroTag: "addFriendButton",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const AddFriendPage()),
+              ).then((_) => _loadFriendsWithEventCounts()); // Refresh the list after adding a friend
+            },
+            child: const Icon(Icons.person_add),
+          ),
+        ],
       ),
     );
   }
+}
+class FriendEventListPage extends StatefulWidget {
+  final String friendId;
+  const FriendEventListPage({super.key, required this.friendId});
+
+  @override
+  State<FriendEventListPage> createState() => _FriendEventListPageState();
+}
+
+class _FriendEventListPageState extends State<FriendEventListPage> {
+  List<Event> events = [];
+  final DatabaseHelper dbHelper = DatabaseHelper();
+
+  @override
+    void initState() {
+       super.initState();
+       _loadEvents();
+    }
+
+  void _loadEvents() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return; //Handle user not logged in case
+    FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.friendId)
+        .collection('events')
+        .snapshots()
+        .listen((snapshot) async {
+      final dbHelper = DatabaseHelper();
+      for (var doc in snapshot.docs) {
+        final event = Event.fromFirestore(doc.data() as Map<String, dynamic>, doc.id);
+        await dbHelper.insertEvent(event, widget.friendId);
+      }
+
+      final loadedEvents = await dbHelper.getAllEvents(widget.friendId);
+      setState(() {
+        events = loadedEvents;
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Friend\'s Events')),
+      body: ListView.builder(
+        itemCount: events.length,
+        itemBuilder: (context, index) {
+          final event = events[index];
+          return ListTile(
+            title: Text(event.name),
+            subtitle: Text(event.date),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => GiftListPage(eventId: event.id!, userId: widget.friendId),
+                ),
+              );
+            },
+          );
+        },
+      ),
+   );
+  }
+}
+
+class FriendWithEvents {
+  final Friend friend;
+  final int upcomingEventCount;
+  FriendWithEvents({required this.friend, required this.upcomingEventCount});
 }
