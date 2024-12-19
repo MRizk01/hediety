@@ -8,6 +8,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:logger/logger.dart';
 
 
 // Gift Model and DatabaseHelper
@@ -318,17 +319,17 @@ class Gift {
     };
   }
 
-  static Gift fromFirestore(Map<String, dynamic> map, String id) {
+  factory Gift.fromFirestore(Map<String, dynamic> data, String id) {
     return Gift(
       id: id,
-      name: map['name'],
-      description: map['description'],
-      category: map['category'],
-      price: (map['price'] as num).toDouble(),
-      status: map['status'] ?? 'available',
-      eventId: map['event_id'],
+      name: data['name'] ?? 'Unknown',
+      description: data['description'] ?? 'Unknown',
+      category: data['category'] ?? 'Unknown',
+      price: data['price']?.toDouble() ?? 0.0,
+      status: data['status'] ?? 'available',
+      eventId: data['eventId'],
     );
-  }  
+  }
 
 
   static Gift fromSQLite(Map<String, dynamic> map) {
@@ -429,12 +430,12 @@ class _AddFriendPageState extends State<AddFriendPage> {
           children: [
             TextField(
               controller: phoneController,
-              decoration: InputDecoration(labelText: 'Friend\'s Phone Number'),
+              decoration: const InputDecoration(labelText: 'Friend\'s Phone Number'),
             ),
             const SizedBox(height: 16.0),
             ElevatedButton(
               onPressed: () => addFriend(context, phoneController.text),
-              child: Text('Add Friend'),
+              child: const Text('Add Friend'),
             ),
           ],
         ),
@@ -577,7 +578,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
           });
 
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('User registered successfully!')),
+            const SnackBar(content: Text('User registered successfully!')),
           );
         }
       } on FirebaseAuthException catch (e) {
@@ -595,7 +596,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
       } catch (e) {
         print('Unexpected error: $e');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('An unexpected error occurred.')),
+          const SnackBar(content: Text('An unexpected error occurred.')),
         );
       }
     }
@@ -605,7 +606,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Register'),
+        title: const Text('Register'),
       ),
       body: Form(
         key: _formKey,
@@ -615,7 +616,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
             children: [
               TextFormField(
                 controller: nameController,
-                decoration: InputDecoration(labelText: 'Name'),
+                decoration: const InputDecoration(labelText: 'Name'),
                 validator: (value) {
                   if (value == null || value.isEmpty) {
                     return 'Please enter your name';
@@ -625,7 +626,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
               ),
               TextFormField(
                 controller: phoneController,
-                decoration: InputDecoration(labelText: 'Phone'),
+                decoration: const InputDecoration(labelText: 'Phone'),
                 validator: (value) {
                   if (value == null || value.isEmpty) {
                     return 'Please enter your phone number';
@@ -635,7 +636,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
               ),
               TextFormField(
                 controller: emailController,
-                decoration: InputDecoration(labelText: 'Email'),
+                decoration: const InputDecoration(labelText: 'Email'),
                 validator: (value) {
                   if (value == null || value.isEmpty) {
                     return 'Please enter your email';
@@ -645,7 +646,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
               ),
               TextFormField(
                 controller: passwordController,
-                decoration: InputDecoration(labelText: 'Password'),
+                decoration: const InputDecoration(labelText: 'Password'),
                 obscureText: true,
                 validator: (value) {
                   if (value == null || value.isEmpty) {
@@ -656,7 +657,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
               ),
               ElevatedButton(
                 onPressed:() => registerUser(context),
-                child: Text('Register'),
+                child: const Text('Register'),
               ),
             ],
           ),
@@ -858,75 +859,83 @@ class _AddEventPageState extends State<AddEventPage> {
 
 // UI Code (GiftListPage and GiftDetailsPage)
 class GiftListPage extends StatefulWidget {
-  final String eventId;
+  final String? eventId;
 
-  const GiftListPage({super.key, required this.eventId});
+  const GiftListPage({super.key, this.eventId});
 
   @override
   State<GiftListPage> createState() => _GiftListPageState();
 }
 
-class _GiftListPageState extends State<GiftListPage> {
-  // final dbHelper = DatabaseHelper();
+//
+ class _GiftListPageState extends State<GiftListPage> {
   List<Gift> gifts = [];
-  late DatabaseReference _giftsRef;
-  late StreamSubscription<DatabaseEvent> _giftsSubscription;
-  
+  late StreamSubscription<QuerySnapshot> _giftsSubscription;
+  final logger = Logger();
+
   @override
   void initState() {
     super.initState();
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      _giftsRef = FirebaseDatabase.instance.ref('users/${user.uid}/gifts');
-      _fetchAndSyncGifts();
-      syncLocalToFirestore(); // Sync local changes to Firestore
-    }
+    _loadGifts();
+
     Connectivity().onConnectivityChanged.listen((ConnectivityResult result) {
       if (result != ConnectivityResult.none) {
         syncLocalToFirestore(); // Trigger sync when back online
       }
     });
-
   }
 
-  void _fetchAndSyncGifts() async {
+  void _loadGifts() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
-      final giftsRef = FirebaseFirestore.instance
+      final dbHelper = DatabaseHelper();
+      logger.i('GiftListPage: Listening for gifts for user: ${user.uid}');
+
+      _giftsSubscription = FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .collection('gifts')
-          .where('event_id', isEqualTo: widget.eventId);
+          .snapshots()
+          .listen((snapshot) async {
+        logger.i('GiftListPage: Firestore data changed. ${snapshot.docs.length} docs.');
+        final firebaseGifts = snapshot.docs
+            .map((doc) => Gift.fromFirestore(doc.data(), doc.id))
+            .toList();
 
-      giftsRef.snapshots().listen((QuerySnapshot snapshot) async {
-        final dbHelper = DatabaseHelper();
-        for (var doc in snapshot.docs) {
-          final gift = Gift.fromFirestore(doc.data() as Map<String, dynamic>, doc.id);
+        logger.i("GiftListPage: FirebaseGifts: ${firebaseGifts.map((e) => e.toMap())}");
+
+        for (final gift in firebaseGifts) {
           await dbHelper.insertGift(gift, user.uid, synced: true);
         }
-        _loadGiftsFromSQLite();
+
+        final localGifts = await dbHelper.getAllGifts(user.uid);
+
+        if (widget.eventId != null && widget.eventId!.isNotEmpty) {
+          logger.i('GiftListPage: Filtering by eventId: ${widget.eventId}');
+          setState(() {
+            gifts = localGifts.where((element) {
+              final isMatchingEvent = element.eventId != null && element.eventId == widget.eventId;
+              logger.i('GiftListPage: Checking gift ${element.name} eventId: ${element.eventId}, match: $isMatchingEvent');
+              return isMatchingEvent;
+            }).toList();
+
+            logger.i("GiftListPage: gifts after filter: ${gifts.map((e) => e.toMap())}");
+          });
+        } else {
+          setState(() {
+            gifts = localGifts;
+            logger.i("GiftListPage: All local gifts ${gifts.map((e) => e.toMap())}");
+          });
+        }
       });
     }
   }
-
-
-  void _loadGiftsFromSQLite() async {
-    final dbHelper = DatabaseHelper();
-    final loadedGifts = await dbHelper.getGiftsByEvent(widget.eventId);
-    setState(() {
-      gifts = loadedGifts;
-    });
-  }
-
-
-
 
   @override
   void dispose() {
     _giftsSubscription.cancel();
     super.dispose();
-  }  
-
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -951,7 +960,11 @@ class _GiftListPageState extends State<GiftListPage> {
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => GiftDetailsPage(eventId: widget.eventId),
+                MaterialPageRoute(
+                  builder: (context) => GiftDetailsPage(
+                    gift: gift,
+                    eventId: gift.eventId,
+                  ),
                 ),
               );
             },
@@ -965,14 +978,15 @@ class _GiftListPageState extends State<GiftListPage> {
             onPressed: () async {
               await Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const GiftDetailsPage()),
+                MaterialPageRoute(
+                  builder: (context) => GiftDetailsPage(eventId: widget.eventId),
+                ),
               );
-              // _loadGifts(); // Refresh list after adding
             },
             child: const Icon(Icons.add),
           ),
           const SizedBox(width: 10),
-          FloatingActionButton(
+           FloatingActionButton(
             onPressed: () async {
               if (gifts.isNotEmpty) {
                 final lastGiftId = gifts.last.id;
@@ -1006,7 +1020,6 @@ class _GiftListPageState extends State<GiftListPage> {
 }
 
 
-
 class FriendGiftListPage extends StatelessWidget {
   final String friendId;
   const FriendGiftListPage({super.key, required this.friendId});
@@ -1030,6 +1043,10 @@ class FriendGiftListPage extends StatelessWidget {
           }
 
           final gifts = snapshot.data!.docs;
+          print('FriendGiftListPage: Gifts count: ${gifts.length} for user id: $friendId');
+           for(final doc in gifts) {
+              print("FriendGiftListPage: Gift data ${doc.data()} and doc Id is: ${doc.id}");// Log all firestore data retrieved
+          }          
           return ListView.builder(
             itemCount: gifts.length,
             itemBuilder: (context, index) {
@@ -1242,7 +1259,7 @@ class AuthGate extends StatelessWidget {
         if (snapshot.hasData) {
           return const HomePage();
         } else {
-          return LoginPage();
+          return const LoginPage();
         }
       },
     );
@@ -1275,7 +1292,7 @@ class _HomePageState extends State<HomePage> {
           .snapshots()
           .listen((snapshot) {
         final loadedFriends = snapshot.docs.map((doc) {
-          return Friend.fromFirestore(doc.data() as Map<String, dynamic>, doc.id);
+          return Friend.fromFirestore(doc.data(), doc.id);
         }).toList();
         setState(() {
           friends = loadedFriends;
@@ -1295,7 +1312,7 @@ class _HomePageState extends State<HomePage> {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => GiftListPage(eventId: 'someEventId')),
+                MaterialPageRoute(builder: (context) => const GiftListPage()),
               );
             },
             child: const Text('My Gifts'),
