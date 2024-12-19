@@ -19,23 +19,43 @@ Future<void> syncLocalToFirestore() async {
   final user = FirebaseAuth.instance.currentUser;
 
   if (user != null) {
-    final dbHelper = DatabaseHelper();    
+    final dbHelper = DatabaseHelper();
+    
+    // Fetch all unsynced gifts from the local SQLite database
     final unsyncedGifts = await dbHelper.getAllGifts(user.uid);
+    
+    // Iterate through each unsynced gift
     for (var gift in unsyncedGifts) {
-      //check if the gift is not synced and has an id
-      if(gift.id == null || gift.id!.isEmpty){
-        // Add to Firestore
+      if (gift.id == null || gift.id!.isEmpty) {
+        // If the gift doesn't have an ID, it means it's not yet in Firestore, so we need to add it.
         final docRef = await FirebaseFirestore.instance
             .collection('users')
             .doc(user.uid)
             .collection('gifts')
-            .add(gift.toMap());
+            .add({
+              ...gift.toMap(),  // Ensure the existing fields from gift are included
+              'status': gift.status,  // Explicitly include the status field
+            });
+
+        // After adding, update the gift ID from Firestore and mark it as synced in the local database
         gift.id = docRef.id;
         await dbHelper.insertGift(gift, user.uid, synced: true);
+      } else {
+        // If the gift already has an ID, update the existing document in Firestore
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .collection('gifts')
+            .doc(gift.id)
+            .set({
+              ...gift.toMap(),  // Ensure the existing fields from gift are included
+              'status': gift.status,  // Explicitly sync the status field
+            }, SetOptions(merge: true));  // Merge to avoid overwriting other fields
       }
     }
   }
 }
+
 
 class DatabaseHelper {
   static final DatabaseHelper _instance = DatabaseHelper._internal();
@@ -304,8 +324,18 @@ class Gift {
   double price;
   String status;
   String? eventId; // New field to associate the gift with an event
+  String? userId; // New field to associate the gift with a user
 
-  Gift({this.id, required this.name, required this.description, required this.category, required this.price,required this.status,this.eventId,});
+  Gift({
+    this.id,
+    required this.name,
+    required this.description,
+    required this.category,
+    required this.price,
+    required this.status,
+    this.eventId,
+    this.userId,
+  });
 
   Map<String, dynamic> toMap() {
     return {
@@ -316,6 +346,7 @@ class Gift {
       'price': price,
       'status': status,
       'eventId': eventId,
+      'userId': userId,
     };
   }
 
@@ -328,9 +359,9 @@ class Gift {
       price: data['price']?.toDouble() ?? 0.0,
       status: data['status'] ?? 'available',
       eventId: data['eventId'],
+      userId: data['userId'],
     );
   }
-
 
   static Gift fromSQLite(Map<String, dynamic> map) {
     return Gift(
@@ -341,12 +372,11 @@ class Gift {
       price: map['price'],
       status: map['status'],
       eventId: map['event_id'],
+      userId: map['user_id'],
     );
   }
-
-
-
 }
+
 
 ////////////
 class AddFriendPage extends StatefulWidget {
@@ -869,156 +899,170 @@ class GiftListPage extends StatefulWidget {
   State<GiftListPage> createState() => _GiftListPageState();
 }
 
-//
 class _GiftListPageState extends State<GiftListPage> {
   List<Gift> gifts = [];
-  late StreamSubscription<QuerySnapshot> _giftsSubscription;
-  final logger = Logger();
+ late StreamSubscription<QuerySnapshot> _giftsSubscription;
+ final logger = Logger();
 
-  @override
+ @override
   void initState() {
-  super.initState();
+     super.initState();
     _loadGifts();
-  Connectivity().onConnectivityChanged.listen((ConnectivityResult result) {
-      if (result != ConnectivityResult.none) {
-        syncLocalToFirestore(); // Trigger sync when back online
-      }
-    });
-    }
+    Connectivity().onConnectivityChanged.listen((ConnectivityResult result) {
+        if (result != ConnectivityResult.none) {
+         syncLocalToFirestore(); // Trigger sync when back online
+       }
+     });
+   }
 
-  void _loadGifts() async {
-  final dbHelper = DatabaseHelper();
-  logger.i('GiftListPage: Listening for gifts for user: ${widget.userId}');    
-  final user = FirebaseAuth.instance.currentUser;
+   void _loadGifts() async {
+     final dbHelper = DatabaseHelper();
+   logger.i('GiftListPage: Listening for gifts for user: ${widget.userId}');    
+   final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
 
 
-  _giftsSubscription = FirebaseFirestore.instance
-      .collection('users')
+ _giftsSubscription = FirebaseFirestore.instance
+     .collection('users')
       .doc(widget.userId)
       .collection('gifts')
-      .snapshots()
-      .listen((snapshot) async {
-    logger.i('GiftListPage: Firestore data changed. ${snapshot.docs.length} docs.');
-    final firebaseGifts = snapshot.docs
+     .snapshots()
+       .listen((snapshot) async {
+     logger.i('GiftListPage: Firestore data changed. ${snapshot.docs.length} docs.');
+     final firebaseGifts = snapshot.docs
         .map((doc) => Gift.fromFirestore(doc.data(), doc.id))
-        .toList();
+       .toList();
 
-      logger.i("GiftListPage: FirebaseGifts: ${firebaseGifts.map((e) => e.toMap())}");
+       logger.i("GiftListPage: FirebaseGifts: ${firebaseGifts.map((e) => e.toMap())}");
 
-    for (final gift in firebaseGifts) {
-      await dbHelper.insertGift(gift, widget.userId, synced: true);
-    }
+     for (final gift in firebaseGifts) {
+     await dbHelper.insertGift(gift, widget.userId, synced: true);
+      }
 
-    final localGifts = await dbHelper.getAllGifts(widget.userId);
+     final localGifts = await dbHelper.getAllGifts(widget.userId);
 
-    if (widget.eventId != null && widget.eventId!.isNotEmpty) {
-      logger.i('GiftListPage: Filtering by eventId: ${widget.eventId}');
+      if (widget.eventId != null && widget.eventId!.isNotEmpty) {
+       logger.i('GiftListPage: Filtering by eventId: ${widget.eventId}');
         setState(() {
-          gifts = localGifts.where((element) {
-            final isMatchingEvent = element.eventId != null && element.eventId == widget.eventId;
+         gifts = localGifts.where((element) {
+           final isMatchingEvent = element.eventId != null && element.eventId == widget.eventId;
             logger.i('GiftListPage: Checking gift ${element.name} eventId: ${element.eventId}, match: $isMatchingEvent');
-            return isMatchingEvent;
-          }).toList();
+          return isMatchingEvent;
+           }).toList();
 
-        logger.i("GiftListPage: gifts after filter: ${gifts.map((e) => e.toMap())}");
+         logger.i("GiftListPage: gifts after filter: ${gifts.map((e) => e.toMap())}");
       });
-        } else {
-        setState(() {
-          gifts = localGifts;
+     } else {
+       setState(() {
+       gifts = localGifts;
           logger.i("GiftListPage: All local gifts ${gifts.map((e) => e.toMap())}");
         });
       }
     });
-  }
+   }
 }
     @override
-    void dispose() {
-      _giftsSubscription.cancel();
-        super.dispose();
+      void dispose() {
+       _giftsSubscription.cancel();
+      super.dispose();
       }
 
-  @override
-  Widget build(BuildContext context) {
+   @override
+   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Gift List'),
-        actions: [
+     appBar: AppBar(
+       title: const Text('Gift List'),
+         actions: [
           IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              await FirebaseAuth.instance.signOut();
-            },
-          ),
-        ],
-      ),
-      body: ListView.builder(
-        itemCount: gifts.length,
-        itemBuilder: (context, index) {
-          final gift = gifts[index];
-          return ListTile(
-            title: Text(gift.name),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => GiftDetailsPage(
-                    gift: gift,
-                    eventId: gift.eventId,
+              icon: const Icon(Icons.logout),
+              onPressed: () async {
+                 await FirebaseAuth.instance.signOut();
+              },
+            ),
+          ],
+       ),
+       body: ListView.builder(
+         itemCount: gifts.length,
+         itemBuilder: (context, index) {
+         final gift = gifts[index];
+           return ListTile(
+           title: Text(gift.name),
+             onTap: () {
+               Navigator.push(
+               context,
+               MaterialPageRoute(
+                 builder: (context) => GiftDetailsPage(
+                       gift: gift,
+                     eventId: gift.eventId,
+                 ),
+              ),
+           );
+           },
+               trailing: Row(
+                 mainAxisSize: MainAxisSize.min,
+                 children: [
+                   if(FirebaseAuth.instance.currentUser!.uid == widget.userId && gift.status != "pledged")
+                         IconButton(
+                           icon: const Icon(Icons.delete),
+                             onPressed: () => _deleteGift(gift.id!),
+                           ),
+                    ],
+               ),
+            );
+         },
+       ),
+       floatingActionButton: Row(
+         mainAxisAlignment: MainAxisAlignment.end,
+         children: [
+           if(FirebaseAuth.instance.currentUser!.uid == widget.userId)
+               FloatingActionButton(
+                 onPressed: () async {
+                  await Navigator.push(
+                     context,
+                   MaterialPageRoute(
+                     builder: (context) => GiftDetailsPage(eventId: widget.eventId),
+                     ),
+                  );
+                  },
+                  child: const Icon(Icons.add),
                   ),
-                ),
-              );
-            },
-          );
-        },
-      ),
-      floatingActionButton: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          FloatingActionButton(
-            onPressed: () async {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => GiftDetailsPage(eventId: widget.eventId),
-                ),
-              );
-            },
-            child: const Icon(Icons.add),
-          ),
-          const SizedBox(width: 10),
-          FloatingActionButton(
-            onPressed: () async {
-              if (gifts.isNotEmpty) {
-                final lastGiftId = gifts.last.id;
-                final user = FirebaseAuth.instance.currentUser;
-
-                if (lastGiftId != null && user != null) {
-                  // Delete from Firestore
-                  await FirebaseFirestore.instance
-                      .collection('users')
-                      .doc(widget.userId)
-                      .collection('gifts')
-                      .doc(lastGiftId)
-                      .delete();
-
-                  // Delete from SQLite
-                  final dbHelper = DatabaseHelper();
-                  await dbHelper.deleteGift(lastGiftId);
-
-                  setState(() {
-                    gifts.removeWhere((gift) => gift.id == lastGiftId);
-                  });
-                }
-              }
-            },
-            child: const Icon(Icons.delete),
-          ),
-        ],
-      ),
+               ],
+         ),
     );
-  }
+ }
+
+
+ void _deleteGift(String giftId) async {
+  final user = FirebaseAuth.instance.currentUser;
+  final gift = gifts.firstWhere((g) => g.id == giftId);
+  if (gift.status == 'pledged') {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Cannot delete a pledged gift.')),
+    );
+    return;
+  }   
+     if (user != null) {
+    // Delete from Firestore
+   await FirebaseFirestore.instance
+         .collection('users')
+         .doc(widget.userId)
+         .collection('gifts')
+         .doc(giftId)
+         .delete();
+
+       // Delete from SQLite
+   final dbHelper = DatabaseHelper();
+   await dbHelper.deleteGift(giftId);
+
+       if(mounted) {
+      setState(() {
+            gifts.removeWhere((gift) => gift.id == giftId);
+         });
+       }
+    }
+ }
 }
+
 class FriendGiftListPage extends StatelessWidget {
   final String friendId;
   const FriendGiftListPage({super.key, required this.friendId});
@@ -1078,24 +1122,44 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
   final categoryController = TextEditingController();
   final priceController = TextEditingController();
   String _selectedStatus = "available";
-  
+  bool _isPledgeButton = false; // New variable for pledge button
+  bool _canEdit = true;
+
   @override
   void initState() {
     super.initState();
-       if (widget.gift != null) {
-          nameController.text = widget.gift!.name;
-          descriptionController.text = widget.gift!.description;
-          categoryController.text = widget.gift!.category;
-          priceController.text = widget.gift!.price.toString();
-          _selectedStatus = widget.gift!.status;
+    _checkIfCanEdit();
+    if (widget.gift != null) {
+      nameController.text = widget.gift!.name;
+      descriptionController.text = widget.gift!.description;
+      categoryController.text = widget.gift!.category;
+      priceController.text = widget.gift!.price.toString();
+      _selectedStatus = widget.gift!.status;
     }
 
-   Connectivity().onConnectivityChanged.listen((ConnectivityResult result) {
+    Connectivity().onConnectivityChanged.listen((ConnectivityResult result) {
       if (result != ConnectivityResult.none) {
-          syncLocalToFirestore(); // Trigger sync when back online
-       }
+        syncLocalToFirestore(); // Trigger sync when back online
+      }
     });
-}
+  }
+
+  void _checkIfCanEdit() {
+    if (widget.gift != null) {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        setState(() {
+          final isOwner = (user.uid == widget.gift!.userId);
+          _canEdit = (isOwner && widget.gift!.status != 'pledged'); // Owner can edit if not pledged
+          _isPledgeButton = (!isOwner && widget.gift!.status == 'available'); // Friends can pledge only if available
+        });
+      }
+    } else {
+      // If creating a new gift
+      _canEdit = true;
+      _isPledgeButton = false;
+    }
+  }
 
   @override
   void dispose() {
@@ -1127,14 +1191,17 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
                   }
                   return null;
                 },
+                readOnly: !_canEdit, // Restrict editing based on the owner and status
               ),
               TextFormField(
                 controller: descriptionController,
                 decoration: const InputDecoration(labelText: 'Description'),
+                readOnly: !_canEdit, // Restrict editing
               ),
               TextFormField(
                 controller: categoryController,
                 decoration: const InputDecoration(labelText: 'Category'),
+                readOnly: !_canEdit, // Restrict editing
               ),
               TextFormField(
                 controller: priceController,
@@ -1149,6 +1216,7 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
                   }
                   return null;
                 },
+                readOnly: !_canEdit, // Restrict editing
               ),
               DropdownButtonFormField<String>(
                 value: _selectedStatus,
@@ -1158,72 +1226,85 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
                     child: Text(status),
                   );
                 }).toList(),
-                onChanged: (newValue) {
-                  setState(() {
-                    _selectedStatus = newValue!;
-                  });
-                },
+                onChanged: _canEdit
+                    ? (newValue) {
+                        setState(() {
+                          _selectedStatus = newValue!;
+                        });
+                      }
+                    : null, // Disable dropdown if editing is not allowed
                 decoration: const InputDecoration(labelText: 'Status'),
               ),
               const SizedBox(height: 20),
-              ElevatedButton(
-              onPressed: () async {
-                if (_formKey.currentState!.validate()) {
-                  final user = FirebaseAuth.instance.currentUser;
+              if (_canEdit)
+                ElevatedButton(
+                  onPressed: _saveGift,
+                  child: const Text('Save Gift'),
+                ),
+              // Add Pledge Button here
+              if (_isPledgeButton) 
+                ElevatedButton(
+                  onPressed: () async {
+                    final user = FirebaseAuth.instance.currentUser;
+                    if (user != null && widget.gift != null) {
+                      await FirebaseFirestore.instance
+                          .collection('users')
+                          .doc(widget.gift!.userId)
+                          .collection('gifts')
+                          .doc(widget.gift!.id)
+                          .update({'status': 'pledged'});
 
-                  if (user != null) {
-                    // Prepare the Gift data
-                    final newGift = Gift(
-                      id: null,
-                      name: nameController.text,
-                      description: descriptionController.text,
-                      category: categoryController.text,
-                      price: double.tryParse(priceController.text) ?? 0.0,
-                      status: _selectedStatus,
-                      eventId: widget.eventId, // Set the event ID
-                    );
+                      setState(() {
+                        _selectedStatus = 'pledged';
+                        _isPledgeButton = false; // Disable pledge button after pledging
+                        _canEdit = false; // Disable editing after pledging
+                      });
 
-
-                    // Add the Gift to Firestore
-                    final docRef = await FirebaseFirestore.instance
-                        .collection('users')
-                        .doc(user.uid)
-                        .collection('gifts')
-                        .add(newGift.toMap());
-
-                    // Use Firestore's generated ID
-                    newGift.id = docRef.id;
-
-                    // Cache the new Gift in SQLite
-                    final dbHelper = DatabaseHelper();
-                    await dbHelper.insertGift(newGift, user.uid, synced: true);
-
-                    if(widget.eventId != null) {
-                          Navigator.pop(context);
-                          Navigator.pop(context);
-                        if (mounted) {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => GiftListPage(eventId: widget.eventId, userId: FirebaseAuth.instance.currentUser!.uid),
-                            ),
-                          );
-                        }
-                    } else {
-                          Navigator.pop(context);
-                      }
-                        }
-                       }
-                   },
-                    child: const Text('Save'),
-                  ),
-              ],
-           ),
+                      if (mounted) Navigator.pop(context);
+                    }
+                  },
+                  child: const Text('Pledge'),
+                ),
+            ],
+          ),
         ),
       ),
-  );
- }
+    );
+  }
+
+  void _saveGift() async {
+    if (_formKey.currentState!.validate()) {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final newGift = Gift(
+          id: widget.gift?.id ?? DateTime.now().millisecondsSinceEpoch.toString(), // Unique ID
+          name: nameController.text,
+          description: descriptionController.text,
+          category: categoryController.text,
+          price: double.parse(priceController.text),
+          status: _selectedStatus,
+          eventId: widget.eventId,
+          userId: user.uid, // Associate gift with current user
+        );
+
+        final dbHelper = DatabaseHelper();
+        await dbHelper.insertGift(newGift, user.uid);
+
+        // Save to Firestore
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .collection('gifts')
+            .doc(newGift.id)
+            .set(newGift.toMap());
+
+        if (mounted) Navigator.pop(context);
+      }
+    }
+  }
+
 }
+
 
 Future<bool> isOnline() async {
   var connectivityResult = await Connectivity().checkConnectivity();
@@ -1257,6 +1338,7 @@ class HedieatyApp extends StatelessWidget {
     );
   }
 }
+
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
 
