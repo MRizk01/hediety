@@ -247,21 +247,26 @@ class AddFriendPage extends StatefulWidget {
 class _AddFriendPageState extends State<AddFriendPage> {
   final TextEditingController phoneController = TextEditingController();
 
-  Future<void> addFriend(String phoneNumber) async {
+  Future<void> addFriend(BuildContext context, String phoneNumber) async {
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('User not logged in.')),
+      );
+      return;
+    }    
 
     try {
       // Search for the user with the entered phone number
       QuerySnapshot query = await FirebaseFirestore.instance
           .collection('users')
-          .where('phone', isEqualTo: phoneNumber)
+          .where('phone', isEqualTo: phoneNumber.trim())
           .get();
 
       if (query.docs.isNotEmpty) {
         final friendData = query.docs.first;
         final friendUid = friendData.id; // The friend's UID
-        final friendName = friendData['name'];
+        final friendName = friendData['name'] ?? 'Unknown';
 
         // Add the friend to the current user's friends list
         await FirebaseFirestore.instance
@@ -274,12 +279,27 @@ class _AddFriendPageState extends State<AddFriendPage> {
           'phone': phoneNumber,
         });
 
-        print('Friend added successfully!');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Friend added successfully!')),
+        );
+
+        // Success feedback
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Friend added successfully!')),
+        );
+
+        Navigator.pop(context); // Return to the home page
       } else {
-        print('User with this phone number does not exist.');
+        // No user found with this phone number
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('User with this phone number does not exist.')),
+        );
       }
     } catch (e) {
       print('Failed to add friend: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('An error occurred while adding the friend.')),
+      );
     }
   }
 
@@ -302,7 +322,7 @@ class _AddFriendPageState extends State<AddFriendPage> {
             const SizedBox(height: 16.0),
             ElevatedButton(
               onPressed: () async {
-                await addFriend(phoneController.text);
+                await addFriend(context, phoneController.text);
                 Navigator.pop(context);
               },
               child: const Text('Add Friend'),
@@ -419,20 +439,94 @@ class _RegistrationPageState extends State<RegistrationPage> {
   final confirmPasswordController = TextEditingController();
   final nameController = TextEditingController();
   final phoneController = TextEditingController();
+  
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    nameController.dispose();
+    phoneController.dispose();
+    super.dispose();
+  }
+  Future<void> registerUser(BuildContext context) async {
+    if (_formKey.currentState!.validate()) {
+      try {
+        UserCredential userCredential = await FirebaseAuth.instance
+            .createUserWithEmailAndPassword(
+          email: emailController.text.trim(),
+          password: passwordController.text.trim(),
+        );
+
+        if (userCredential.user != null) {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(userCredential.user!.uid)
+              .set({
+            'name': nameController.text.trim(),
+            'phone': phoneController.text.trim(),
+            'email': emailController.text.trim(),
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('User registered successfully!')),
+          );
+        }
+      } on FirebaseAuthException catch (e) {
+        String errorMessage = "Registration failed.";
+        if (e.code == 'weak-password') {
+          errorMessage = 'The password provided is too weak.';
+        } else if (e.code == 'email-already-in-use') {
+          errorMessage = 'The account already exists for that email.';
+        } else if (e.code == 'invalid-email') {
+          errorMessage = 'The email address is not valid.';
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorMessage)),
+        );
+      } catch (e) {
+        print('Unexpected error: $e');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('An unexpected error occurred.')),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Register')),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
+      appBar: AppBar(
+        title: Text('Register'),
+      ),
+      body: Form(
+        key: _formKey,
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
           child: Column(
             children: [
               TextFormField(
+                controller: nameController,
+                decoration: InputDecoration(labelText: 'Name'),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter your name';
+                  }
+                  return null;
+                },
+              ),
+              TextFormField(
+                controller: phoneController,
+                decoration: InputDecoration(labelText: 'Phone'),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter your phone number';
+                  }
+                  return null;
+                },
+              ),
+              TextFormField(
                 controller: emailController,
-                decoration: const InputDecoration(labelText: 'Email'),
+                decoration: InputDecoration(labelText: 'Email'),
                 validator: (value) {
                   if (value == null || value.isEmpty) {
                     return 'Please enter your email';
@@ -441,18 +535,8 @@ class _RegistrationPageState extends State<RegistrationPage> {
                 },
               ),
               TextFormField(
-                controller: phoneController,
-                decoration: InputDecoration(labelText: 'Phone Number'),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter your phone number';
-                  }
-                  return null;
-                },
-              ),              
-              TextFormField(
                 controller: passwordController,
-                decoration: const InputDecoration(labelText: 'Password'),
+                decoration: InputDecoration(labelText: 'Password'),
                 obscureText: true,
                 validator: (value) {
                   if (value == null || value.isEmpty) {
@@ -461,60 +545,9 @@ class _RegistrationPageState extends State<RegistrationPage> {
                   return null;
                 },
               ),
-              TextFormField(
-                controller: confirmPasswordController,
-                decoration: const InputDecoration(labelText: 'Confirm Password'),
-                obscureText: true,
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please confirm your password';
-                  }
-                  if (value != passwordController.text) {
-                    return 'Passwords do not match';
-                  }
-                  return null;
-                },
-              ),
               ElevatedButton(
-                onPressed: () async {
-                  if (_formKey.currentState!.validate()) {
-                    try {
-                      UserCredential userCredential = await FirebaseAuth.instance
-                          .createUserWithEmailAndPassword(
-                        email: emailController.text,
-                        password: passwordController.text,
-                      );
-                      // Navigate to the next screen or show a success message
-                      if (userCredential.user != null) {
-                        await FirebaseFirestore.instance
-                            .collection('users')
-                            .doc(userCredential.user!.uid)
-                            .set({
-                          'name': nameController.text, // Replace with actual name input
-                          'phone': phoneController.text, // Replace with an input for phone number
-                        });
-                      }
-                      Navigator.pop(context);
-                    } on FirebaseAuthException catch (e) {
-                      String errorMessage = "Registration failed.";
-                      if (e.code == 'weak-password') {
-                        errorMessage = 'The password provided is too weak.';
-                      } else if (e.code == 'email-already-in-use') {
-                        errorMessage = 'The account already exists for that email.';
-                      } else if (e.code == 'invalid-email') {
-                        errorMessage = 'The email address is not valid.';
-                      }
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(errorMessage)),
-                      );
-                    } catch (e) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('An unexpected error occurred.')),
-                      );
-                    }
-                  }
-                },
-                child: const Text('Register'),
+                onPressed:() => registerUser(context),
+                child: Text('Register'),
               ),
             ],
           ),
