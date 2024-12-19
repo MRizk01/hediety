@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart';
+import 'package:path/path.dart' as path_db;
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -51,24 +51,35 @@ class DatabaseHelper {
 
   Future<Database> _initDatabase() async {
     final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'hedieaty.db');
+    final path = path_db.join(dbPath, 'hedieaty.db');
 
     return await openDatabase(
       path,
-      version: 2,
-      onCreate: (db, version) {
-        return db.execute('''
-          CREATE TABLE gifts(
-            id TEXT PRIMARY KEY,
-            name TEXT,
-            description TEXT,
-            category TEXT,
-            price REAL,
-            status TEXT,
-            user_id TEXT,   -- Add user_id field
-            isSynced INTEGER DEFAULT 0
-          )
-        ''');
+      version: 3,
+    onCreate: (db, version) async {
+      await db.execute('''
+        CREATE TABLE events(
+          id TEXT PRIMARY KEY,
+          name TEXT,
+          date TEXT,
+          location TEXT,
+          description TEXT,
+          user_id TEXT
+        )
+      ''');      
+      await db.execute('''
+        CREATE TABLE gifts(
+          id TEXT PRIMARY KEY,
+          name TEXT,
+          description TEXT,
+          category TEXT,
+          price REAL,
+          status TEXT,
+          event_id TEXT,   -- Foreign key to associate with events
+          user_id TEXT,
+          isSynced INTEGER DEFAULT 0
+        )
+      ''');
         // Create friends table
         db.execute('''
           CREATE TABLE friends(
@@ -79,31 +90,48 @@ class DatabaseHelper {
           )
         ''');
       },
-      onUpgrade: (db, oldVersion, newVersion) async {
-        if (oldVersion < 3) {  // Increment version number
-          await db.execute('ALTER TABLE gifts ADD COLUMN user_id TEXT');
-        }
+       onUpgrade: (db, oldVersion, newVersion) async {
+      if (oldVersion < 3) {
+        await db.execute('''
+          CREATE TABLE events(
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            date TEXT,
+            location TEXT,
+            description TEXT,
+            user_id TEXT
+          )
+        ''');   
+        await db.execute('ALTER TABLE gifts ADD COLUMN event_id TEXT');
       }
-    );
-  }
+    },
+  );
+}
 
-  Future<void> insertGift(Gift gift, String userId, {bool synced = false}) async {
-    final db = await database;
-    await db.insert(
-      'gifts',
-      {
-        'id': gift.id,
-        'name': gift.name,
-        'description': gift.description,
-        'category': gift.category,
-        'price': gift.price,
-        'status': gift.status,
-        'user_id': userId,  // Store user ID
-        'isSynced': synced ? 1 : 0
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-  }
+Future<void> insertGift(Gift gift, String userId, {bool synced = false}) async {
+  final db = await database;
+  await db.insert(
+    'gifts',
+    {
+      'id': gift.id,
+      'name': gift.name,
+      'description': gift.description,
+      'category': gift.category,
+      'price': gift.price,
+      'status': gift.status,
+      'event_id': gift.eventId, // Store event ID
+      'user_id': userId,
+      'isSynced': synced ? 1 : 0,
+    },
+    conflictAlgorithm: ConflictAlgorithm.replace,
+  );
+}
+
+Future<List<Gift>> getGiftsByEvent(String eventId) async {
+  final db = await database;
+  final result = await db.query('gifts', where: 'event_id = ?', whereArgs: [eventId]);
+  return result.map((map) => Gift.fromSQLite(map)).toList();
+}
 
 
   Future<List<Gift>> getAllGifts(String userId) async {
@@ -152,8 +180,38 @@ class DatabaseHelper {
    Future<void> deleteFriend(String id) async {
       final db = await database;
       await db.delete('friends', where: 'id = ?', whereArgs: [id]);
-   }  
+   }
+
+  Future<void> insertEvent(Event event, String userId) async {
+    final db = await database;
+    await db.insert(
+      'events',
+      {
+        'id': event.id,
+        'name': event.name,
+        'date': event.date,
+        'location': event.location,
+        'description': event.description,
+        'user_id': userId,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Event>> getAllEvents(String userId) async {
+    final db = await database;
+    final result = await db.query('events', where: 'user_id = ?', whereArgs: [userId]);
+    return result.map((map) => Event.fromSQLite(map)).toList();
+  }
+
+  Future<void> deleteEvent(String eventId) async {
+    final db = await database;
+    await db.delete('events', where: 'id = ?', whereArgs: [eventId]);
+    await db.delete('gifts', where: 'event_id = ?', whereArgs: [eventId]); // Cascade delete
+  }
 }
+
+
 
 class Friend {
   String? id;
@@ -190,6 +248,53 @@ class Friend {
 
 }
 
+class Event {
+  String? id;
+  String name;
+  String date;
+  String location;
+  String description;
+
+  Event({
+    this.id,
+    required this.name,
+    required this.date,
+    required this.location,
+    required this.description,
+  });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'date': date,
+      'location': location,
+      'description': description,
+    };
+  }
+
+  static Event fromSQLite(Map<String, dynamic> map) {
+    return Event(
+      id: map['id'],
+      name: map['name'],
+      date: map['date'],
+      location: map['location'],
+      description: map['description'],
+    );
+  }
+
+  static Event fromFirestore(Map<String, dynamic> map, String id) {
+    return Event(
+      id: id,
+      name: map['name'],
+      date: map['date'],
+      location: map['location'],
+      description: map['description'],
+    );
+  }
+}
+
+
 class Gift {
   String? id;
   String name;
@@ -197,8 +302,9 @@ class Gift {
   String category;
   double price;
   String status;
+  String? eventId; // New field to associate the gift with an event
 
-  Gift({this.id, required this.name, required this.description, required this.category, required this.price,required this.status});
+  Gift({this.id, required this.name, required this.description, required this.category, required this.price,required this.status,this.eventId,});
 
   Map<String, dynamic> toMap() {
     return {
@@ -208,6 +314,7 @@ class Gift {
       'category': category,
       'price': price,
       'status': status,
+      'eventId': eventId,
     };
   }
 
@@ -219,8 +326,10 @@ class Gift {
       category: map['category'],
       price: (map['price'] as num).toDouble(),
       status: map['status'] ?? 'available',
+      eventId: map['event_id'],
     );
-  }
+  }  
+
 
   static Gift fromSQLite(Map<String, dynamic> map) {
     return Gift(
@@ -230,9 +339,9 @@ class Gift {
       category: map['category'],
       price: map['price'],
       status: map['status'],
+      eventId: map['event_id'],
     );
   }
-
 
 
 
@@ -557,9 +666,201 @@ class _RegistrationPageState extends State<RegistrationPage> {
   }
 }
 
+class EventListPage extends StatefulWidget {
+  const EventListPage({super.key});
+
+  @override
+  State<EventListPage> createState() => _EventListPageState();
+}
+
+class _EventListPageState extends State<EventListPage> {
+  List<Event> events = [];
+  final DatabaseHelper dbHelper = DatabaseHelper();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadEvents();
+  }
+
+  void _loadEvents() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('events')
+          .snapshots()
+          .listen((QuerySnapshot snapshot) async {
+        final dbHelper = DatabaseHelper();
+        for (var doc in snapshot.docs) {
+          final event = Event.fromFirestore(doc.data() as Map<String, dynamic>, doc.id);
+          await dbHelper.insertEvent(event, user.uid);
+        }
+        final loadedEvents = await dbHelper.getAllEvents(user.uid);
+        setState(() {
+          events = loadedEvents;
+        });
+      });
+    }
+  }
+
+
+  void _deleteEvent(String eventId) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      // Delete from SQLite
+      await dbHelper.deleteEvent(eventId);
+
+      // Delete from Firestore
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('events')
+          .doc(eventId)
+          .delete();
+
+      _loadEvents(); // Refresh event list
+    }
+  }
+
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('My Events')),
+      body: ListView.builder(
+        itemCount: events.length,
+        itemBuilder: (context, index) {
+          final event = events[index];
+          return ListTile(
+            title: Text(event.name),
+            subtitle: Text(event.date),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => GiftListPage(eventId: event.id!),
+                ),
+              );
+            },
+            trailing: IconButton(
+              icon: const Icon(Icons.delete),
+              onPressed: () => _deleteEvent(event.id!),
+            ),
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const AddEventPage()),
+          ).then((_) => _loadEvents());
+        },
+        child: const Icon(Icons.add),
+      ),
+    );
+  }
+}
+
+class AddEventPage extends StatefulWidget {
+  const AddEventPage({super.key});
+
+  @override
+  State<AddEventPage> createState() => _AddEventPageState();
+}
+
+class _AddEventPageState extends State<AddEventPage> {
+  final _formKey = GlobalKey<FormState>();
+  final nameController = TextEditingController();
+  final dateController = TextEditingController();
+  final locationController = TextEditingController();
+  final descriptionController = TextEditingController();
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    dateController.dispose();
+    locationController.dispose();
+    descriptionController.dispose();
+    super.dispose();
+  }
+
+  void _saveEvent() async {
+    if (_formKey.currentState!.validate()) {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final newEvent = Event(
+          id: DateTime.now().millisecondsSinceEpoch.toString(), // Unique ID
+          name: nameController.text,
+          date: dateController.text,
+          location: locationController.text,
+          description: descriptionController.text,
+        );
+
+        final dbHelper = DatabaseHelper();
+        await dbHelper.insertEvent(newEvent, user.uid);
+
+        // Save to Firestore
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .collection('events')
+            .doc(newEvent.id)
+            .set(newEvent.toMap());
+
+        Navigator.pop(context);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Add Event')),
+      body: Form(
+        key: _formKey,
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            children: [
+              TextFormField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: 'Event Name'),
+                validator: (value) => value!.isEmpty ? 'Please enter a name' : null,
+              ),
+              TextFormField(
+                controller: dateController,
+                decoration: const InputDecoration(labelText: 'Date'),
+              ),
+              TextFormField(
+                controller: locationController,
+                decoration: const InputDecoration(labelText: 'Location'),
+              ),
+              TextFormField(
+                controller: descriptionController,
+                decoration: const InputDecoration(labelText: 'Description'),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _saveEvent,
+                child: const Text('Save Event'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
 // UI Code (GiftListPage and GiftDetailsPage)
 class GiftListPage extends StatefulWidget {
-  const GiftListPage({super.key});
+  final String eventId;
+
+  const GiftListPage({super.key, required this.eventId});
 
   @override
   State<GiftListPage> createState() => _GiftListPageState();
@@ -589,43 +890,34 @@ class _GiftListPageState extends State<GiftListPage> {
   }
 
   void _fetchAndSyncGifts() async {
-    final dbHelper = DatabaseHelper();
     final user = FirebaseAuth.instance.currentUser;
-
     if (user != null) {
       final giftsRef = FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
-          .collection('gifts');
+          .collection('gifts')
+          .where('event_id', isEqualTo: widget.eventId);
 
       giftsRef.snapshots().listen((QuerySnapshot snapshot) async {
+        final dbHelper = DatabaseHelper();
         for (var doc in snapshot.docs) {
           final gift = Gift.fromFirestore(doc.data() as Map<String, dynamic>, doc.id);
-
-          // Insert only if the gift does not already exist in SQLite
-          final existingGifts = await dbHelper.getAllGifts(user.uid);
-          final exists = existingGifts.any((g) => g.id == gift.id);
-
-          if (!exists) {
-            await dbHelper.insertGift(gift, user.uid, synced: true);
-          }
+          await dbHelper.insertGift(gift, user.uid, synced: true);
         }
-
-        _loadGiftsFromSQLite(); // Refresh the UI
+        _loadGiftsFromSQLite();
       });
     }
   }
 
-void _loadGiftsFromSQLite() async {
-  final dbHelper = DatabaseHelper();
-  final user = FirebaseAuth.instance.currentUser;
-  if (user != null) {
-    final loadedGifts = await dbHelper.getAllGifts(user.uid);
+
+  void _loadGiftsFromSQLite() async {
+    final dbHelper = DatabaseHelper();
+    final loadedGifts = await dbHelper.getGiftsByEvent(widget.eventId);
     setState(() {
       gifts = loadedGifts;
     });
   }
-}  
+
 
 
 
@@ -659,7 +951,8 @@ void _loadGiftsFromSQLite() async {
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => GiftDetailsPage(gift: gift)),
+                MaterialPageRoute(builder: (context) => GiftDetailsPage(eventId: widget.eventId),
+                ),
               );
             },
           );
@@ -755,7 +1048,8 @@ class FriendGiftListPage extends StatelessWidget {
 
 class GiftDetailsPage extends StatefulWidget {
   final Gift? gift;
-  const GiftDetailsPage({super.key, this.gift});
+  final String? eventId; // New field for the event ID
+  const GiftDetailsPage({super.key, this.gift, this.eventId});
 
   @override
   State<GiftDetailsPage> createState() => _GiftDetailsPageState();
@@ -864,12 +1158,15 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
                   if (user != null) {
                     // Prepare the Gift data
                     final newGift = Gift(
+                      id: null,
                       name: nameController.text,
                       description: descriptionController.text,
                       category: categoryController.text,
                       price: double.tryParse(priceController.text) ?? 0.0,
                       status: _selectedStatus,
+                      eventId: widget.eventId, // Set the event ID
                     );
+
 
                     // Add the Gift to Firestore
                     final docRef = await FirebaseFirestore.instance
@@ -998,11 +1295,20 @@ class _HomePageState extends State<HomePage> {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const GiftListPage()),
+                MaterialPageRoute(builder: (context) => GiftListPage(eventId: 'someEventId')),
               );
             },
             child: const Text('My Gifts'),
-          ),          
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const EventListPage()),
+              );
+            },
+            child: const Text('My Events'),
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: () async {
@@ -1029,6 +1335,7 @@ class _HomePageState extends State<HomePage> {
           );
         },
       ),
+      
       floatingActionButton: FloatingActionButton(
         onPressed: () {
           Navigator.push(
