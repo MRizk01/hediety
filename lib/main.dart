@@ -11,8 +11,117 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:logger/logger.dart';
 
 
-// Gift Model and DatabaseHelper
-// Removed duplicate Gift class definition
+class ProfilePage extends StatefulWidget {
+  const ProfilePage({super.key});
+
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  final nameController = TextEditingController();
+  final emailController = TextEditingController();
+  final phoneController = TextEditingController();
+  bool notificationsEnabled = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserProfile();
+  }
+
+  void _loadUserProfile() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+      if (userDoc.exists) {
+        setState(() {
+          nameController.text = userDoc['name'] ?? '';
+          emailController.text = userDoc['email'] ?? '';
+          phoneController.text = userDoc['phone'] ?? '';
+          notificationsEnabled = userDoc['notificationsEnabled'] ?? true;
+        });
+      }
+    }
+  }
+
+  void _saveProfile() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).update({
+        'name': nameController.text.trim(),
+        'email': emailController.text.trim(),
+        'phone': phoneController.text.trim(),
+        'notificationsEnabled': notificationsEnabled,
+      });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Profile updated successfully!')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Profile')),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            TextFormField(
+              controller: nameController,
+              decoration: const InputDecoration(labelText: 'Name'),
+            ),
+            TextFormField(
+              controller: emailController,
+              decoration: const InputDecoration(labelText: 'Email'),
+            ),
+            TextFormField(
+              controller: phoneController,
+              decoration: const InputDecoration(labelText: 'Phone'),
+            ),
+            SwitchListTile(
+              title: const Text('Enable Notifications'),
+              value: notificationsEnabled,
+              onChanged: (value) => setState(() => notificationsEnabled = value),
+            ),
+            ElevatedButton(
+              onPressed: _saveProfile,
+              child: const Text('Save'),
+            ),
+            const Divider(),
+            const Text('My Events and Gifts', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const EventListPage()),
+                );
+              },
+              child: const Text('View My Events'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final user = FirebaseAuth.instance.currentUser;
+                if (user != null) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => GiftListPage(userId: user.uid)),
+                  );
+                }
+              },
+              child: const Text('View My Gifts'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                // Navigate to "My Pledged Gifts" page (implement this later)
+              },
+              child: const Text('My Pledged Gifts'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 
 Future<void> syncLocalToFirestore() async {
@@ -1419,26 +1528,14 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('Home Page'),
         actions: [
-          ElevatedButton(
-            onPressed: () {
-              final user = FirebaseAuth.instance.currentUser;
-              if (user != null) {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => GiftListPage(userId: user.uid)),
-                );
-              }
-            },
-            child: const Text('My Gifts'),
-          ),
-          ElevatedButton(
+          IconButton(
+            icon: const Icon(Icons.person),
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const EventListPage()),
+                MaterialPageRoute(builder: (context) => const ProfilePage()),
               );
             },
-            child: const Text('My Events'),
           ),
           IconButton(
             icon: const Icon(Icons.logout),
