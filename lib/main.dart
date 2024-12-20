@@ -11,7 +11,7 @@ import 'package:logger/logger.dart';
 import 'package:overlay_support/overlay_support.dart';
 import 'theme.dart';
 import 'custom_widgets.dart';
-
+import 'dart:async';
 
 
 class PledgedGiftsPage extends StatefulWidget {
@@ -673,6 +673,7 @@ class _LoginPageState extends State<LoginPage> {
           child: Column(
             children: [
               TextFormField(
+                key: Key('email_field'), // Add key here
                 controller: emailController,
                 decoration: const InputDecoration(labelText: 'Email'),
                 validator: (value) {
@@ -684,6 +685,7 @@ class _LoginPageState extends State<LoginPage> {
               ),
               const SizedBox(height: 10),
               TextFormField(
+                key: Key('password_field'), // Add key here
                 controller: passwordController,
                 decoration: const InputDecoration(labelText: 'Password'),
                 obscureText: true,
@@ -696,6 +698,7 @@ class _LoginPageState extends State<LoginPage> {
               ),
               const SizedBox(height: 10),
               ElevatedButton(
+                key: Key('login_button'), // Add key here
                 onPressed: () async {
                   if (_formKey.currentState!.validate()) {
                     try {
@@ -703,32 +706,15 @@ class _LoginPageState extends State<LoginPage> {
                         email: emailController.text,
                         password: passwordController.text,
                       );
-                      //cc1
-                      // Navigator.pushReplacement(
-                      //   context,
-                      //   MaterialPageRoute(builder: (context) => const HomePage()),
-                      // );                      
-                      // Navigate to Gift List screen after successful login
+                      // Navigate to the next screen after successful login
                     } on FirebaseAuthException catch (e) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(content: Text(e.message ?? 'Login failed')),
-                      );                      
-                      // Handle login errors (e.g., wrong credentials)
+                      );
                     }
                   }
                 },
                 child: const Text('Login'),
-              ),
-              
-              TextButton(
-                onPressed: () {
-                  // Navigate to RegistrationPage
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const RegistrationPage()),
-                  );
-                },                
-                child: const Text('Don\'t have an account? Sign up'),
               ),
             ],
           ),
@@ -1586,6 +1572,9 @@ Future<bool> isOnline() async {
   return connectivityResult != ConnectivityResult.none;
 }
 
+// Create a navigator key
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
@@ -1596,20 +1585,22 @@ void main() async {
   } catch (e) {
     print('Error initializing Firebase: $e');
   }
-  runApp(const HedieatyApp());
+  runApp(HedieatyApp(navigatorKey: navigatorKey)); // Pass navigatorKey to the app
 }
 
 class HedieatyApp extends StatelessWidget {
-  const HedieatyApp({super.key});
+    final GlobalKey<NavigatorState> navigatorKey;
+   const HedieatyApp({super.key, required this.navigatorKey});
 
   @override
-  Widget build(BuildContext context) {
-    return OverlaySupport.global(  // Wrap your MaterialApp with OverlaySupport.global
-      child: MaterialApp(
-        title: 'Hedieaty',
-        theme: AppTheme.getTheme(),
-        home: const AuthGate(),  // Replace with your desired home widget
-      ),
+   Widget build(BuildContext context) {
+      return OverlaySupport.global(
+        child: MaterialApp(
+          navigatorKey: navigatorKey, // Set the navigator key here
+         title: 'Hedieaty',
+          theme: AppTheme.getTheme(),
+          home: const AuthGate(), // Keep AuthGate as the home
+        ),
     );
   }
 }
@@ -1635,6 +1626,9 @@ class AuthGate extends StatelessWidget {
   }
 }
 
+
+
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -1644,6 +1638,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   List<Friend> friends = [];
+  late StreamSubscription<QuerySnapshot> _friendsSubscription; // Add subscription variable
 
   @override
   void initState() {
@@ -1654,7 +1649,8 @@ class _HomePageState extends State<HomePage> {
   Future<void> _loadFriendsWithEventCounts() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return; // Handle user not logged in case
-    FirebaseFirestore.instance
+
+    _friendsSubscription = FirebaseFirestore.instance
         .collection('users')
         .doc(user.uid)
         .collection('friends')
@@ -1671,9 +1667,13 @@ class _HomePageState extends State<HomePage> {
         friendsWithEvents.add(
             FriendWithEvents(friend: friend, upcomingEventCount: eventCount));
       }
-      setState(() {
-        friends = friendsWithEvents.map((e) => e.friend).toList();
-      });
+
+      // Check if the widget is still mounted before calling setState
+      if (mounted) {
+        setState(() {
+          friends = friendsWithEvents.map((e) => e.friend).toList();
+        });
+      }
     });
   }
 
@@ -1686,6 +1686,12 @@ class _HomePageState extends State<HomePage> {
         .collection('events')
         .get();
     return snapshot.docs.length;
+  }
+
+  @override
+  void dispose() {
+    _friendsSubscription.cancel(); // Cancel the stream subscription when the widget is disposed
+    super.dispose();
   }
 
   @override
