@@ -747,6 +747,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
     phoneController.dispose();
     super.dispose();
   }
+
   Future<void> registerUser(BuildContext context) async {
     if (_formKey.currentState!.validate()) {
       try {
@@ -851,7 +852,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
               ),
               const SizedBox(height: 10),
               ElevatedButton(
-                onPressed:() => registerUser(context),
+                onPressed: () => registerUser(context),
                 child: const Text('Register'),
               ),
             ],
@@ -861,6 +862,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
     );
   }
 }
+
 
 class EventListPage extends StatefulWidget {
   const EventListPage({super.key});
