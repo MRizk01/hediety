@@ -5,11 +5,13 @@ import 'package:path/path.dart' as path_db;
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:logger/logger.dart';
 import 'package:overlay_support/overlay_support.dart';
+import 'theme.dart';
+import 'custom_widgets.dart';
+
 
 
 class PledgedGiftsPage extends StatefulWidget {
@@ -680,6 +682,7 @@ class _LoginPageState extends State<LoginPage> {
                   return null;
                 },
               ),
+              const SizedBox(height: 10),
               TextFormField(
                 controller: passwordController,
                 decoration: const InputDecoration(labelText: 'Password'),
@@ -691,6 +694,7 @@ class _LoginPageState extends State<LoginPage> {
                   return null;
                 },
               ),
+              const SizedBox(height: 10),
               ElevatedButton(
                 onPressed: () async {
                   if (_formKey.currentState!.validate()) {
@@ -723,7 +727,7 @@ class _LoginPageState extends State<LoginPage> {
                     context,
                     MaterialPageRoute(builder: (context) => const RegistrationPage()),
                   );
-                },
+                },                
                 child: const Text('Don\'t have an account? Sign up'),
               ),
             ],
@@ -814,6 +818,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
           padding: const EdgeInsets.all(16.0),
           child: Column(
             children: [
+              const SizedBox(height: 10),
               TextFormField(
                 controller: nameController,
                 decoration: const InputDecoration(labelText: 'Name'),
@@ -824,6 +829,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                   return null;
                 },
               ),
+              const SizedBox(height: 10),
               TextFormField(
                 controller: phoneController,
                 decoration: const InputDecoration(labelText: 'Phone'),
@@ -834,6 +840,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                   return null;
                 },
               ),
+              const SizedBox(height: 10),
               TextFormField(
                 controller: emailController,
                 decoration: const InputDecoration(labelText: 'Email'),
@@ -844,6 +851,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                   return null;
                 },
               ),
+              const SizedBox(height: 10),
               TextFormField(
                 controller: passwordController,
                 decoration: const InputDecoration(labelText: 'Password'),
@@ -855,6 +863,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                   return null;
                 },
               ),
+              const SizedBox(height: 10),
               ElevatedButton(
                 onPressed:() => registerUser(context),
                 child: const Text('Register'),
@@ -1028,35 +1037,47 @@ class _AddEventPageState extends State<AddEventPage> {
           padding: const EdgeInsets.all(16.0),
           child: Column(
             children: [
+              // Event Name field
               TextFormField(
                 controller: nameController,
                 decoration: const InputDecoration(labelText: 'Event Name'),
                 validator: (value) => value!.isEmpty ? 'Please enter a name' : null,
               ),
+              const SizedBox(height: 10), // Add space between fields
+
+              // Date field
               TextFormField(
                 controller: dateController,
                 decoration: const InputDecoration(labelText: 'Date'),
               ),
+              const SizedBox(height: 10), // Add space between fields
+
+              // Location field
               TextFormField(
                 controller: locationController,
                 decoration: const InputDecoration(labelText: 'Location'),
               ),
+              const SizedBox(height: 10),
+
+              // Description field
               TextFormField(
                 controller: descriptionController,
                 decoration: const InputDecoration(labelText: 'Description'),
               ),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: _saveEvent,
-                child: const Text('Save Event'),
-              ),
+              const SizedBox(height: 20), // Add space before the button
             ],
           ),
         ),
       ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _saveEvent,
+        child: const Icon(Icons.save), // Add save icon to the button
+      ),
     );
   }
 }
+
+
 
 
 // UI Code (GiftListPage and GiftDetailsPage)
@@ -1170,6 +1191,9 @@ class _GiftListPageState extends State<GiftListPage> {
           final gift = gifts[index];
           return Card(
             color: getStatusColor(gift.status), // Apply the color based on the gift's status
+            margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), // Margin for spacing
+            elevation: 4, // Elevation for shadow
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.0)), // Rounded corners
             child: ListTile(
               title: Text(gift.name),
               onTap: () {
@@ -1249,6 +1273,8 @@ class _GiftListPageState extends State<GiftListPage> {
 }
 
 
+
+
 class FriendGiftListPage extends StatelessWidget {
   final String friendId;
   const FriendGiftListPage({super.key, required this.friendId});
@@ -1300,6 +1326,7 @@ class GiftDetailsPage extends StatefulWidget {
   @override
   State<GiftDetailsPage> createState() => _GiftDetailsPageState();
 }
+
 
 class _GiftDetailsPageState extends State<GiftDetailsPage> {
   final _formKey = GlobalKey<FormState>();
@@ -1396,9 +1423,10 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
           padding: const EdgeInsets.all(16.0),
           child: Column(
             children: [
-              TextFormField(
+              // Replace TextFormField with CustomTextFormField
+              CustomTextFormField(
                 controller: nameController,
-                decoration: const InputDecoration(labelText: 'Name'),
+                labelText: 'Name',
                 validator: (value) {
                   if (value == null || value.isEmpty) {
                     return 'Please enter a name';
@@ -1407,19 +1435,28 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
                 },
                 readOnly: !_canEdit, // Restrict editing based on the owner and status
               ),
-              TextFormField(
+              const SizedBox(height: 10),
+
+              // Description field
+              CustomTextFormField(
                 controller: descriptionController,
-                decoration: const InputDecoration(labelText: 'Description'),
-                readOnly: !_canEdit, // Restrict editing
+                labelText: 'Description',
+                readOnly: !_canEdit,
               ),
-              TextFormField(
+              const SizedBox(height: 10),
+
+              // Category field
+              CustomTextFormField(
                 controller: categoryController,
-                decoration: const InputDecoration(labelText: 'Category'),
-                readOnly: !_canEdit, // Restrict editing
+                labelText: 'Category',
+                readOnly: !_canEdit,
               ),
-              TextFormField(
+              const SizedBox(height: 10),
+
+              // Price field
+              CustomTextFormField(
                 controller: priceController,
-                decoration: const InputDecoration(labelText: 'Price'),
+                labelText: 'Price',
                 keyboardType: TextInputType.number,
                 validator: (value) {
                   if (value == null || value.isEmpty) {
@@ -1430,8 +1467,11 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
                   }
                   return null;
                 },
-                readOnly: !_canEdit, // Restrict editing
+                readOnly: !_canEdit,
               ),
+              const SizedBox(height: 10),
+
+              // Status dropdown (unchanged)
               DropdownButtonFormField<String>(
                 value: _selectedStatus,
                 items: ['available', 'pledged', 'purchased'].map((String status) {
@@ -1447,43 +1487,49 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
                 decoration: const InputDecoration(labelText: 'Status'),
               ),
               const SizedBox(height: 20),
-              if (_canEdit)
-                ElevatedButton(
-                  onPressed: _saveGift,
-                  child: const Text('Save Gift'),
-                ),
+
+              // Pledge button if applicable
               if (_isPledgeButton)
-                ElevatedButton(
+                CustomElevatedButton(
                   onPressed: () async {
-                    final user = FirebaseAuth.instance.currentUser;
-                    if (user != null && widget.gift != null) {
-                      await FirebaseFirestore.instance
-                          .collection('users')
-                          .doc(widget.gift!.userId)
-                          .collection('gifts')
-                          .doc(widget.gift!.id)
-                          .update({
-                            'status': 'pledged',
-                            'pledgedBy': user.uid,
-                          });
+                    if (widget.gift != null) {
+                      final user = FirebaseAuth.instance.currentUser;
+                      if (user != null) {
+                        await FirebaseFirestore.instance
+                            .collection('users')
+                            .doc(widget.gift!.userId)
+                            .collection('gifts')
+                            .doc(widget.gift!.id)
+                            .update({
+                          'status': 'pledged',
+                          'pledgedBy': user.uid,
+                        });
 
-                      setState(() {
-                        _selectedStatus = 'pledged';
-                        _isPledgeButton = false;
-                        _canEdit = false;
-                      });
+                        setState(() {
+                          _selectedStatus = 'pledged';
+                          _isPledgeButton = false;
+                          _canEdit = false;
+                        });
 
-                      // Show notification for successful pledge
-                      showSimpleNotification(
-                        Text('Gift Pledged'),
-                        subtitle: Text('You have pledged this gift!'),
-                        background: Colors.green,
-                      );
+                        // Show notification for successful pledge
+                        showSimpleNotification(
+                          Text('Gift Pledged'),
+                          subtitle: Text('You have pledged this gift!'),
+                          background: Colors.green,
+                        );
 
-                      if (mounted) Navigator.pop(context);
+                        if (mounted) Navigator.pop(context);
+                      }
                     }
                   },
                   child: const Text('Pledge'),
+                ),
+
+              // Save button if editable
+              if (_canEdit)
+                CustomElevatedButton(
+                  onPressed: _saveGift,
+                  child: const Text('Save'),
                 ),
             ],
           ),
@@ -1501,7 +1547,7 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
           name: nameController.text,
           description: descriptionController.text,
           category: categoryController.text,
-          price: double.parse(priceController.text),
+          price: double.tryParse(priceController.text) ?? 0.0,
           status: _selectedStatus,
           eventId: widget.eventId,
           userId: user.uid,
@@ -1532,6 +1578,9 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
 }
 
 
+
+
+
 Future<bool> isOnline() async {
   var connectivityResult = await Connectivity().checkConnectivity();
   return connectivityResult != ConnectivityResult.none;
@@ -1558,7 +1607,7 @@ class HedieatyApp extends StatelessWidget {
     return OverlaySupport.global(  // Wrap your MaterialApp with OverlaySupport.global
       child: MaterialApp(
         title: 'Hedieaty',
-        theme: ThemeData(primarySwatch: Colors.blue),
+        theme: AppTheme.getTheme(),
         home: const AuthGate(),  // Replace with your desired home widget
       ),
     );
@@ -1662,29 +1711,74 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
-      body: ListView.builder(
-        itemCount: friends.length,
-        itemBuilder: (context, index) {
-          final friend = friends[index];
-          return ListTile(
-            title: Text(friend.name),
-            subtitle: Text('${friend.phoneNumber}'),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) =>
-                      FriendEventListPage(friendId: friend.id!),
-                ),
-              );
-            },
-          );
-        },
+      body: Column(
+        children: [
+          // Add Icon-based Buttons for "My Gifts" and "My Events"
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              ElevatedButton.icon(
+                icon: const Icon(Icons.card_giftcard),
+                label: const Text('My Gifts'),
+                onPressed: () {
+                  final user = FirebaseAuth.instance.currentUser;
+                  if (user != null) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => GiftListPage(userId: user.uid),
+                      ),
+                    );
+                  }
+                },
+              ),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.event),
+                label: const Text('My Events'),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const EventListPage(),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 20), // Add some spacing between buttons and friends list
+          // List of friends
+          Expanded(
+            child: ListView.builder(
+              itemCount: friends.length,
+              itemBuilder: (context, index) {
+                final friend = friends[index];
+                return Card(
+                  margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  elevation: 4,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.0)),
+                  child: ListTile(
+                    title: Text(friend.name),
+                    subtitle: Text('${friend.phoneNumber}'),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => FriendEventListPage(friendId: friend.id!),
+                        ),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
-       floatingActionButton: Row(
+      floatingActionButton: Row(
         mainAxisAlignment: MainAxisAlignment.end,
-         children: [
-            FloatingActionButton(
+        children: [
+          FloatingActionButton(
             heroTag: "addEventButton",
             onPressed: () {
               Navigator.push(
@@ -1710,6 +1804,9 @@ class _HomePageState extends State<HomePage> {
     );
   }
 }
+
+
+
 class FriendEventListPage extends StatefulWidget {
   final String friendId;
   const FriendEventListPage({super.key, required this.friendId});
