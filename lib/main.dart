@@ -9,6 +9,8 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:logger/logger.dart';
+import 'package:overlay_support/overlay_support.dart';
+
 
 class PledgedGiftsPage extends StatefulWidget {
   const PledgedGiftsPage({super.key});
@@ -1354,6 +1356,34 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
     super.dispose();
   }
 
+  void _changeStatus(String newStatus) {
+    setState(() {
+      _selectedStatus = newStatus;
+    });
+
+    // Call method to update the gift status in Firestore and show notification
+    _updateGiftStatus(widget.gift!.id!, newStatus);
+  }
+
+  void _updateGiftStatus(String giftId, String newStatus) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('gifts')
+          .doc(giftId)
+          .update({'status': newStatus});
+
+      // Show notification for status change
+      showSimpleNotification(
+        Text('Gift Status Updated'),
+        subtitle: Text('The status has changed to $newStatus'),
+        background: Colors.green,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1405,16 +1435,13 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
               DropdownButtonFormField<String>(
                 value: _selectedStatus,
                 items: ['available', 'pledged', 'purchased'].map((String status) {
-                  return DropdownMenuItem<String>(
-                    value: status,
-                    child: Text(status),
-                  );
+                  return DropdownMenuItem<String>(value: status, child: Text(status));
                 }).toList(),
                 onChanged: _canEdit
                     ? (newValue) {
-                        setState(() {
-                          _selectedStatus = newValue!;
-                        });
+                        if (newValue != null) {
+                          _changeStatus(newValue); // Call the status change method
+                        }
                       }
                     : null, // Disable dropdown if editing is not allowed
                 decoration: const InputDecoration(labelText: 'Status'),
@@ -1425,8 +1452,7 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
                   onPressed: _saveGift,
                   child: const Text('Save Gift'),
                 ),
-              // Add Pledge Button here
-              if (_isPledgeButton) 
+              if (_isPledgeButton)
                 ElevatedButton(
                   onPressed: () async {
                     final user = FirebaseAuth.instance.currentUser;
@@ -1438,13 +1464,21 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
                           .doc(widget.gift!.id)
                           .update({
                             'status': 'pledged',
-                            'pledgedBy': user.uid,});
+                            'pledgedBy': user.uid,
+                          });
 
                       setState(() {
                         _selectedStatus = 'pledged';
-                        _isPledgeButton = false; // Disable pledge button after pledging
-                        _canEdit = false; // Disable editing after pledging
+                        _isPledgeButton = false;
+                        _canEdit = false;
                       });
+
+                      // Show notification for successful pledge
+                      showSimpleNotification(
+                        Text('Gift Pledged'),
+                        subtitle: Text('You have pledged this gift!'),
+                        background: Colors.green,
+                      );
 
                       if (mounted) Navigator.pop(context);
                     }
@@ -1463,14 +1497,14 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
         final newGift = Gift(
-          id: widget.gift?.id ?? DateTime.now().millisecondsSinceEpoch.toString(), // Unique ID
+          id: widget.gift?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
           name: nameController.text,
           description: descriptionController.text,
           category: categoryController.text,
           price: double.parse(priceController.text),
           status: _selectedStatus,
           eventId: widget.eventId,
-          userId: user.uid, // Associate gift with current user
+          userId: user.uid,
         );
 
         final dbHelper = DatabaseHelper();
@@ -1484,11 +1518,17 @@ class _GiftDetailsPageState extends State<GiftDetailsPage> {
             .doc(newGift.id)
             .set(newGift.toMap());
 
+        // Show notification for successful save
+        showSimpleNotification(
+          Text('Gift Saved'),
+          subtitle: Text('Your gift has been saved successfully!'),
+          background: Colors.green,
+        );
+
         if (mounted) Navigator.pop(context);
       }
     }
   }
-
 }
 
 
@@ -1515,12 +1555,12 @@ class HedieatyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Hedieaty',
-      theme: ThemeData(primarySwatch: Colors.blue),
-      // cc2
-      // home: const AuthGate(),
-      home: const AuthGate(),
+    return OverlaySupport.global(  // Wrap your MaterialApp with OverlaySupport.global
+      child: MaterialApp(
+        title: 'Hedieaty',
+        theme: ThemeData(primarySwatch: Colors.blue),
+        home: const AuthGate(),  // Replace with your desired home widget
+      ),
     );
   }
 }
