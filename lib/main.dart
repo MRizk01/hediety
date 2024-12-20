@@ -1070,167 +1070,182 @@ class GiftListPage extends StatefulWidget {
 
 class _GiftListPageState extends State<GiftListPage> {
   List<Gift> gifts = [];
- late StreamSubscription<QuerySnapshot> _giftsSubscription;
- final logger = Logger();
+  late StreamSubscription<QuerySnapshot> _giftsSubscription;
+  final logger = Logger();
 
- @override
+  @override
   void initState() {
-     super.initState();
+    super.initState();
     _loadGifts();
     Connectivity().onConnectivityChanged.listen((ConnectivityResult result) {
-        if (result != ConnectivityResult.none) {
-         syncLocalToFirestore(); // Trigger sync when back online
-       }
-     });
-   }
-
-   void _loadGifts() async {
-     final dbHelper = DatabaseHelper();
-   logger.i('GiftListPage: Listening for gifts for user: ${widget.userId}');    
-   final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-
-
- _giftsSubscription = FirebaseFirestore.instance
-     .collection('users')
-      .doc(widget.userId)
-      .collection('gifts')
-     .snapshots()
-       .listen((snapshot) async {
-     logger.i('GiftListPage: Firestore data changed. ${snapshot.docs.length} docs.');
-     final firebaseGifts = snapshot.docs
-        .map((doc) => Gift.fromFirestore(doc.data(), doc.id))
-       .toList();
-
-       logger.i("GiftListPage: FirebaseGifts: ${firebaseGifts.map((e) => e.toMap())}");
-
-     for (final gift in firebaseGifts) {
-     await dbHelper.insertGift(gift, widget.userId, synced: true);
-      }
-
-     final localGifts = await dbHelper.getAllGifts(widget.userId);
-
-      if (widget.eventId != null && widget.eventId!.isNotEmpty) {
-       logger.i('GiftListPage: Filtering by eventId: ${widget.eventId}');
-        setState(() {
-         gifts = localGifts.where((element) {
-           final isMatchingEvent = element.eventId != null && element.eventId == widget.eventId;
-            logger.i('GiftListPage: Checking gift ${element.name} eventId: ${element.eventId}, match: $isMatchingEvent');
-          return isMatchingEvent;
-           }).toList();
-
-         logger.i("GiftListPage: gifts after filter: ${gifts.map((e) => e.toMap())}");
-      });
-     } else {
-       setState(() {
-       gifts = localGifts;
-          logger.i("GiftListPage: All local gifts ${gifts.map((e) => e.toMap())}");
-        });
+      if (result != ConnectivityResult.none) {
+        syncLocalToFirestore(); // Trigger sync when back online
       }
     });
-   }
-}
-    @override
-      void dispose() {
-       _giftsSubscription.cancel();
-      super.dispose();
-      }
+  }
 
-   @override
-   Widget build(BuildContext context) {
-    return Scaffold(
-     appBar: AppBar(
-       title: const Text('Gift List'),
-         actions: [
-          IconButton(
-              icon: const Icon(Icons.logout),
-              onPressed: () async {
-                 await FirebaseAuth.instance.signOut();
-              },
-            ),
-          ],
-       ),
-       body: ListView.builder(
-         itemCount: gifts.length,
-         itemBuilder: (context, index) {
-         final gift = gifts[index];
-           return ListTile(
-           title: Text(gift.name),
-             onTap: () {
-               Navigator.push(
-               context,
-               MaterialPageRoute(
-                 builder: (context) => GiftDetailsPage(
-                       gift: gift,
-                     eventId: gift.eventId,
-                 ),
-              ),
-           );
-           },
-               trailing: Row(
-                 mainAxisSize: MainAxisSize.min,
-                 children: [
-                   if(FirebaseAuth.instance.currentUser!.uid == widget.userId && gift.status != "pledged")
-                         IconButton(
-                           icon: const Icon(Icons.delete),
-                             onPressed: () => _deleteGift(gift.id!),
-                           ),
-                    ],
-               ),
-            );
-         },
-       ),
-       floatingActionButton: Row(
-         mainAxisAlignment: MainAxisAlignment.end,
-         children: [
-           if(FirebaseAuth.instance.currentUser!.uid == widget.userId)
-               FloatingActionButton(
-                 onPressed: () async {
-                  await Navigator.push(
-                     context,
-                   MaterialPageRoute(
-                     builder: (context) => GiftDetailsPage(eventId: widget.eventId),
-                     ),
-                  );
-                  },
-                  child: const Icon(Icons.add),
-                  ),
-               ],
-         ),
-    );
- }
+  void _loadGifts() async {
+    final dbHelper = DatabaseHelper();
+    logger.i('GiftListPage: Listening for gifts for user: ${widget.userId}');
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      _giftsSubscription = FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('gifts')
+          .snapshots()
+          .listen((snapshot) async {
+        logger.i('GiftListPage: Firestore data changed. ${snapshot.docs.length} docs.');
+        final firebaseGifts = snapshot.docs
+            .map((doc) => Gift.fromFirestore(doc.data(), doc.id))
+            .toList();
 
+        logger.i("GiftListPage: FirebaseGifts: ${firebaseGifts.map((e) => e.toMap())}");
 
- void _deleteGift(String giftId) async {
-  final user = FirebaseAuth.instance.currentUser;
-  final gift = gifts.firstWhere((g) => g.id == giftId);
-  if (gift.status == 'pledged') {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Cannot delete a pledged gift.')),
-    );
-    return;
-  }   
-     if (user != null) {
-    // Delete from Firestore
-   await FirebaseFirestore.instance
-         .collection('users')
-         .doc(widget.userId)
-         .collection('gifts')
-         .doc(giftId)
-         .delete();
+        for (final gift in firebaseGifts) {
+          await dbHelper.insertGift(gift, widget.userId, synced: true);
+        }
 
-       // Delete from SQLite
-   final dbHelper = DatabaseHelper();
-   await dbHelper.deleteGift(giftId);
+        final localGifts = await dbHelper.getAllGifts(widget.userId);
 
-       if(mounted) {
-      setState(() {
-            gifts.removeWhere((gift) => gift.id == giftId);
-         });
-       }
+        if (widget.eventId != null && widget.eventId!.isNotEmpty) {
+          logger.i('GiftListPage: Filtering by eventId: ${widget.eventId}');
+          setState(() {
+            gifts = localGifts.where((element) {
+              final isMatchingEvent = element.eventId != null && element.eventId == widget.eventId;
+              logger.i('GiftListPage: Checking gift ${element.name} eventId: ${element.eventId}, match: $isMatchingEvent');
+              return isMatchingEvent;
+            }).toList();
+
+            logger.i("GiftListPage: gifts after filter: ${gifts.map((e) => e.toMap())}");
+          });
+        } else {
+          setState(() {
+            gifts = localGifts;
+            logger.i("GiftListPage: All local gifts ${gifts.map((e) => e.toMap())}");
+          });
+        }
+      });
     }
- }
+  }
+
+  @override
+  void dispose() {
+    _giftsSubscription.cancel();
+    super.dispose();
+  }
+
+  // Adding the getStatusColor method to color code the gift status
+  Color getStatusColor(String status) {
+    switch (status) {
+      case 'pledged':
+        return Colors.green;
+      case 'purchased':
+        return Colors.red;
+      case 'available':
+      default:
+        return Colors.blue;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Gift List'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await FirebaseAuth.instance.signOut();
+            },
+          ),
+        ],
+      ),
+      body: ListView.builder(
+        itemCount: gifts.length,
+        itemBuilder: (context, index) {
+          final gift = gifts[index];
+          return Card(
+            color: getStatusColor(gift.status), // Apply the color based on the gift's status
+            child: ListTile(
+              title: Text(gift.name),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => GiftDetailsPage(
+                      gift: gift,
+                      eventId: gift.eventId,
+                    ),
+                  ),
+                );
+              },
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (FirebaseAuth.instance.currentUser!.uid == widget.userId && gift.status != "pledged")
+                    IconButton(
+                      icon: const Icon(Icons.delete),
+                      onPressed: () => _deleteGift(gift.id!),
+                    ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+      floatingActionButton: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          if (FirebaseAuth.instance.currentUser!.uid == widget.userId)
+            FloatingActionButton(
+              onPressed: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => GiftDetailsPage(eventId: widget.eventId),
+                  ),
+                );
+              },
+              child: const Icon(Icons.add),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _deleteGift(String giftId) async {
+    final user = FirebaseAuth.instance.currentUser;
+    final gift = gifts.firstWhere((g) => g.id == giftId);
+    if (gift.status == 'pledged') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cannot delete a pledged gift.')),
+      );
+      return;
+    }
+    if (user != null) {
+      // Delete from Firestore
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('gifts')
+          .doc(giftId)
+          .delete();
+
+      // Delete from SQLite
+      final dbHelper = DatabaseHelper();
+      await dbHelper.deleteGift(giftId);
+
+      if (mounted) {
+        setState(() {
+          gifts.removeWhere((gift) => gift.id == giftId);
+        });
+      }
+    }
+  }
 }
+
 
 class FriendGiftListPage extends StatelessWidget {
   final String friendId;
