@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:hediety/main.dart' as app;
+import 'package:hediety/views/auth/login_page.dart';
+import 'package:hediety/views/home_page.dart';
 import 'dart:async';
+import 'package:hediety/utils/constants.dart';
 
 Future<void> pumpUntilVisible(WidgetTester tester, Finder finder, {Duration timeout = const Duration(seconds: 10)}) async {
   bool isVisible = false;
@@ -26,8 +29,8 @@ void main() {
   testWidgets('End-to-End User Flow Test', (WidgetTester tester) async {
     app.main();
     await tester.pumpAndSettle();
-    app.navigatorKey.currentState?.push(
-      MaterialPageRoute(builder: (context) => const app.LoginPage()),
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(builder: (context) => const LoginPage()),
     );
     final emailFieldFinder = find.byKey(const Key('email_field'));
     await pumpUntilVisible(tester, emailFieldFinder);
@@ -50,6 +53,9 @@ void main() {
   testWidgets('Create Event and Add Gift Flow Test', (WidgetTester tester) async {
     app.main();
     await tester.pumpAndSettle();
+      navigatorKey.currentState?.push(
+      MaterialPageRoute(builder: (context) => const HomePage()),
+    );
     final createEventButton = find.byKey(const Key('create_event_button'));
     await tester.tap(createEventButton);
     await tester.pumpAndSettle();
@@ -73,6 +79,9 @@ void main() {
   testWidgets('Add Friend and Pledge Gift Flow', (WidgetTester tester) async {
     app.main();
     await tester.pumpAndSettle();
+       navigatorKey.currentState?.push(
+      MaterialPageRoute(builder: (context) => const HomePage()),
+    );
     final addFriendButton = find.byKey(const Key('add_friend_button'));
     await tester.tap(addFriendButton);
     await tester.pumpAndSettle();
