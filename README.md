@@ -1,3 +1,3 @@
 # hediety
 
-gift list management app using Flutter and Firebase
+Gift list management app using Flutter and Firebase
